@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": "dist",
+    "rootDir": ".",
+    "paths": {}
+  },
+  "include": [
+    "scripts/**/*.ts",
+    "src/lib/config.ts",
+    "src/lib/database.ts",
+    "src/lib/delivery.ts",
+    "src/lib/message.ts",
+    "src/lib/telegram.ts",
+    "src/lib/types.ts"
+  ],
+  "exclude": ["**/*.test.ts", "node_modules", "dist"]
+}

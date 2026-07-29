@@ -1,0 +1,13 @@
+services:
+  ios-payments-bot:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ios-payments-data:/data
+
+volumes:
+  ios-payments-data:
