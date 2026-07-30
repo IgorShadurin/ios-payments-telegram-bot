@@ -132,7 +132,12 @@ function decodePrivateKeyBase64(value: string): string {
 export function getAppStoreConnectConfig(): AppStoreConnectConfig {
   const schema = z.object({
     APP_STORE_CONNECT_KEY_TYPE: z.enum(["team", "individual"]).default("team"),
-    APP_STORE_CONNECT_ISSUER_ID: z.string().uuid().optional(),
+    APP_STORE_CONNECT_ISSUER_ID: z
+      .string()
+      .regex(
+        /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+      )
+      .optional(),
     APP_STORE_CONNECT_KEY_ID: z
       .string()
       .min(3)
