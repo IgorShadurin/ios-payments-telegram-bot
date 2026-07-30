@@ -19,6 +19,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
+  "packageManager": "npm@10.9.4",
   "dependencies": {
     "@apple/app-store-server-library": "3.1.0",
     "better-sqlite3": "13.0.2",
