@@ -6,6 +6,7 @@ import type {
   NewNotification,
   RegisteredApp,
   StoredNotification,
+  StoredTelegramOutboxMessage,
 } from "./types";
 
 interface AppRow {
@@ -38,6 +39,21 @@ interface NotificationRow {
   last_error: string | null;
   telegram_message_id: number | null;
   received_at: number;
+  delivered_at: number | null;
+}
+
+interface TelegramOutboxRow {
+  id: number;
+  deduplication_key: string;
+  category: string;
+  message_html: string;
+  delivery_status: StoredTelegramOutboxMessage["deliveryStatus"];
+  delivery_attempts: number;
+  next_attempt_at: number;
+  locked_at: number | null;
+  last_error: string | null;
+  telegram_message_id: number | null;
+  created_at: number;
   delivered_at: number | null;
 }
 
@@ -78,6 +94,24 @@ function mapNotification(row: NotificationRow): StoredNotification {
   };
 }
 
+function mapTelegramOutboxMessage(
+  row: TelegramOutboxRow,
+): StoredTelegramOutboxMessage {
+  return {
+    id: row.id,
+    deduplicationKey: row.deduplication_key,
+    category: row.category,
+    messageHtml: row.message_html,
+    deliveryStatus: row.delivery_status,
+    deliveryAttempts: row.delivery_attempts,
+    nextAttemptAt: row.next_attempt_at,
+    lastError: row.last_error ?? undefined,
+    telegramMessageId: row.telegram_message_id ?? undefined,
+    createdAt: row.created_at,
+    deliveredAt: row.delivered_at ?? undefined,
+  };
+}
+
 export class AppDatabase {
   private readonly database: Database.Database;
 
@@ -91,11 +125,11 @@ export class AppDatabase {
   }
 
   private migrate(): void {
-    const version = this.database.pragma("user_version", {
+    let version = this.database.pragma("user_version", {
       simple: true,
     }) as number;
 
-    if (version > 1) {
+    if (version > 2) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -148,6 +182,34 @@ export class AppDatabase {
           PRAGMA user_version = 1;
         `);
       })();
+      version = 1;
+    }
+
+    if (version === 1) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE telegram_outbox_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            deduplication_key TEXT NOT NULL UNIQUE,
+            category TEXT NOT NULL,
+            message_html TEXT NOT NULL,
+            delivery_status TEXT NOT NULL DEFAULT 'pending'
+              CHECK (delivery_status IN ('pending', 'sending', 'retry', 'delivered')),
+            delivery_attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL,
+            locked_at INTEGER,
+            last_error TEXT,
+            telegram_message_id INTEGER,
+            created_at INTEGER NOT NULL,
+            delivered_at INTEGER
+          );
+
+          CREATE INDEX telegram_outbox_due_idx
+            ON telegram_outbox_messages(delivery_status, next_attempt_at);
+
+          PRAGMA user_version = 2;
+        `);
+      })();
     }
   }
 
@@ -157,6 +219,10 @@ export class AppDatabase {
 
   healthCheck(): void {
     this.database.prepare("SELECT 1").get();
+  }
+
+  transaction<T>(operation: () => T): T {
+    return this.database.transaction(operation)();
   }
 
   addApp(name: string, bundleId: string, appAppleId: number): RegisteredApp {
@@ -244,6 +310,143 @@ export class AppDatabase {
   appCount(): number {
     const row = this.database
       .prepare("SELECT COUNT(*) AS count FROM apps WHERE enabled = 1")
+      .get() as { count: number };
+    return row.count;
+  }
+
+  enqueueTelegramMessage(
+    deduplicationKey: string,
+    category: string,
+    messageHtml: string,
+  ): {
+    created: boolean;
+    message: StoredTelegramOutboxMessage;
+  } {
+    const now = Date.now();
+    const result = this.database
+      .prepare(
+        `INSERT INTO telegram_outbox_messages (
+          deduplication_key, category, message_html, delivery_status,
+          next_attempt_at, created_at
+        ) VALUES (?, ?, ?, 'pending', ?, ?)
+        ON CONFLICT(deduplication_key) DO NOTHING`,
+      )
+      .run(deduplicationKey, category, messageHtml, now, now);
+    const message = this.getTelegramOutboxMessageByKey(deduplicationKey);
+    if (!message) {
+      throw new Error("Telegram outbox insert did not produce a record");
+    }
+    return { created: result.changes === 1, message };
+  }
+
+  getTelegramOutboxMessageByKey(
+    deduplicationKey: string,
+  ): StoredTelegramOutboxMessage | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT * FROM telegram_outbox_messages WHERE deduplication_key = ?",
+      )
+      .get(deduplicationKey) as TelegramOutboxRow | undefined;
+    return row ? mapTelegramOutboxMessage(row) : undefined;
+  }
+
+  getTelegramOutboxMessageById(
+    id: number,
+  ): StoredTelegramOutboxMessage | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM telegram_outbox_messages WHERE id = ?")
+      .get(id) as TelegramOutboxRow | undefined;
+    return row ? mapTelegramOutboxMessage(row) : undefined;
+  }
+
+  claimTelegramOutboxMessage(
+    id: number,
+  ): StoredTelegramOutboxMessage | undefined {
+    const now = Date.now();
+    const staleLock = now - 10 * 60 * 1000;
+    const result = this.database
+      .prepare(
+        `UPDATE telegram_outbox_messages
+         SET delivery_status = 'sending', locked_at = ?
+         WHERE id = ?
+           AND (
+             (delivery_status IN ('pending', 'retry') AND next_attempt_at <= ?)
+             OR (delivery_status = 'sending' AND locked_at < ?)
+           )`,
+      )
+      .run(now, id, now, staleLock);
+    return result.changes === 1
+      ? this.getTelegramOutboxMessageById(id)
+      : undefined;
+  }
+
+  claimDueTelegramOutboxMessages(limit: number): StoredTelegramOutboxMessage[] {
+    const now = Date.now();
+    const staleLock = now - 10 * 60 * 1000;
+    return this.database.transaction(() => {
+      const rows = this.database
+        .prepare(
+          `SELECT id FROM telegram_outbox_messages
+           WHERE (
+             delivery_status IN ('pending', 'retry') AND next_attempt_at <= ?
+           ) OR (
+             delivery_status = 'sending' AND locked_at < ?
+           )
+           ORDER BY next_attempt_at, id
+           LIMIT ?`,
+        )
+        .all(now, staleLock, limit) as Array<{ id: number }>;
+
+      const claimed: StoredTelegramOutboxMessage[] = [];
+      for (const row of rows) {
+        const message = this.claimTelegramOutboxMessage(row.id);
+        if (message) {
+          claimed.push(message);
+        }
+      }
+      return claimed;
+    })();
+  }
+
+  markTelegramOutboxDelivered(id: number, telegramMessageId: number): void {
+    this.database
+      .prepare(
+        `UPDATE telegram_outbox_messages
+         SET delivery_status = 'delivered',
+             delivery_attempts = delivery_attempts + 1,
+             telegram_message_id = ?,
+             delivered_at = ?,
+             locked_at = NULL,
+             last_error = NULL
+         WHERE id = ? AND delivery_status = 'sending'`,
+      )
+      .run(telegramMessageId, Date.now(), id);
+  }
+
+  markTelegramOutboxForRetry(
+    id: number,
+    error: string,
+    nextAttemptAt: number,
+  ): void {
+    this.database
+      .prepare(
+        `UPDATE telegram_outbox_messages
+         SET delivery_status = 'retry',
+             delivery_attempts = delivery_attempts + 1,
+             next_attempt_at = ?,
+             locked_at = NULL,
+             last_error = ?
+         WHERE id = ? AND delivery_status = 'sending'`,
+      )
+      .run(nextAttemptAt, error.slice(0, 500), id);
+  }
+
+  pendingTelegramOutboxCount(): number {
+    const row = this.database
+      .prepare(
+        `SELECT COUNT(*) AS count FROM telegram_outbox_messages
+         WHERE delivery_status != 'delivered'`,
+      )
       .get() as { count: number };
     return row.count;
   }

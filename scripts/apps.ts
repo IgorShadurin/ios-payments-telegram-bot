@@ -1,29 +1,14 @@
 import { parseArgs } from "node:util";
-import { z } from "zod";
 import { AppDatabase } from "../src/lib/database";
-
-const bundleIdSchema = z
-  .string()
-  .min(3)
-  .max(255)
-  .regex(
-    /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/,
-    "Bundle ID must look like com.example.app",
-  );
-const nameSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(100)
-  .refine(
-    (name) =>
-      [...name].every((character) => {
-        const codePoint = character.codePointAt(0) ?? 0;
-        return codePoint >= 32 && codePoint !== 127;
-      }),
-    "Name cannot contain control characters",
-  );
-const appleIdSchema = z.coerce.number().int().positive().safe();
+import { deliverTelegramOutboxMessageNow } from "../src/lib/delivery";
+import {
+  appAppleIdSchema,
+  appNameSchema,
+  bundleIdSchema,
+  type RegistryMutation,
+  registerTrackedApp,
+  removeTrackedApp,
+} from "../src/lib/registry";
 
 function help(): void {
   console.log(`Manage registered iOS apps.
@@ -34,6 +19,7 @@ Usage:
   npm run apps:dev -- list
   npm run apps:dev -- disable --bundle-id com.example.app
   npm run apps:dev -- enable --bundle-id com.example.app
+  npm run apps:dev -- remove --bundle-id com.example.app
 
 Use "npm run apps -- ..." instead after a production build.`);
 }
@@ -65,7 +51,25 @@ function printApp(app: {
   );
 }
 
-function main(): void {
+async function deliverRegistryNotification(
+  database: AppDatabase,
+  mutation: RegistryMutation,
+): Promise<void> {
+  if (!mutation.outboxMessageId) {
+    return;
+  }
+  const delivered = await deliverTelegramOutboxMessageNow(
+    database,
+    mutation.outboxMessageId,
+  );
+  console.log(
+    delivered
+      ? "Telegram notification delivered."
+      : "Telegram notification queued for retry.",
+  );
+}
+
+async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "help" || command === "--help") {
     help();
@@ -90,13 +94,14 @@ function main(): void {
     const bundleId = requireBundleId(options["bundle-id"]);
 
     if (command === "add") {
-      const app = database.addApp(
-        nameSchema.parse(options.name),
+      const mutation = registerTrackedApp(database, {
+        name: appNameSchema.parse(options.name),
         bundleId,
-        appleIdSchema.parse(options["app-apple-id"]),
-      );
-      console.log("Added:");
-      printApp(app);
+        appAppleId: appAppleIdSchema.parse(options["app-apple-id"]),
+      });
+      console.log(`${mutation.action}:`);
+      printApp(mutation.app);
+      await deliverRegistryNotification(database, mutation);
       return;
     }
 
@@ -104,27 +109,43 @@ function main(): void {
       if (!options.name && !options["app-apple-id"]) {
         throw new Error("Provide --name and/or --app-apple-id");
       }
-      const app = database.updateApp(bundleId, {
-        name: options.name ? nameSchema.parse(options.name) : undefined,
-        appAppleId: options["app-apple-id"]
-          ? appleIdSchema.parse(options["app-apple-id"])
-          : undefined,
-      });
-      if (!app) {
+      const current = database.getAppByBundleId(bundleId, true);
+      if (!current) {
         throw new Error(`No app is registered for ${bundleId}`);
       }
-      console.log("Updated:");
-      printApp(app);
+      const mutation = registerTrackedApp(database, {
+        bundleId,
+        name: options.name ? appNameSchema.parse(options.name) : current.name,
+        appAppleId: options["app-apple-id"]
+          ? appAppleIdSchema.parse(options["app-apple-id"])
+          : current.appAppleId,
+      });
+      console.log(`${mutation.action}:`);
+      printApp(mutation.app);
+      await deliverRegistryNotification(database, mutation);
       return;
     }
 
-    if (command === "enable" || command === "disable") {
-      const app = database.setAppEnabled(bundleId, command === "enable");
-      if (!app) {
+    if (command === "enable") {
+      const current = database.getAppByBundleId(bundleId, true);
+      if (!current) {
         throw new Error(`No app is registered for ${bundleId}`);
       }
-      console.log(`${command === "enable" ? "Enabled" : "Disabled"}:`);
-      printApp(app);
+      const mutation = registerTrackedApp(database, current);
+      console.log(`${mutation.action}:`);
+      printApp(mutation.app);
+      await deliverRegistryNotification(database, mutation);
+      return;
+    }
+
+    if (command === "disable" || command === "remove") {
+      const mutation = removeTrackedApp(database, bundleId);
+      if (!mutation) {
+        throw new Error(`No app is registered for ${bundleId}`);
+      }
+      console.log(`${mutation.action}:`);
+      printApp(mutation.app);
+      await deliverRegistryNotification(database, mutation);
       return;
     }
 
@@ -134,9 +155,7 @@ function main(): void {
   }
 }
 
-try {
-  main();
-} catch (error) {
+main().catch((error) => {
   console.error(error instanceof Error ? error.message : "Command failed");
   process.exitCode = 1;
-}
+});

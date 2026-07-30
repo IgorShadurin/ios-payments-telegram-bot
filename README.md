@@ -5,9 +5,9 @@ clear notifications to one Telegram chat. Every event is saved in persistent
 SQLite first, so a Telegram outage does not lose payment data.
 
 This is a small TypeScript/Next.js service for App Store Server Notifications
-V2. It has one shared webhook URL for all registered apps, a command-line app
-registry, a durable Telegram retry queue, Docker support, and a Coolify-ready
-health endpoint.
+V2. It has one shared webhook URL for all registered apps, a protected app
+registry API, a command-line registry, durable Telegram retry queues, Docker
+support, and a Coolify-ready health endpoint.
 
 ## What it reports
 
@@ -75,6 +75,7 @@ Edit `.env`:
 ```dotenv
 TELEGRAM_BOT_TOKEN=replace-with-your-real-bot-token
 TELEGRAM_CHAT_ID=-1001234567890
+IOS_PAYMENTS_ADMIN_API_KEY=replace-with-a-random-64-character-hex-key
 DATABASE_PATH=./data/ios-payments.sqlite
 APPLE_ENABLE_ONLINE_CHECKS=true
 ```
@@ -113,9 +114,13 @@ npm run apps:dev -- update \
 
 npm run apps:dev -- disable --bundle-id com.example.appa
 npm run apps:dev -- enable --bundle-id com.example.appa
+npm run apps:dev -- remove --bundle-id com.example.appa
 ```
 
-Disabled apps keep their history but their new notifications are rejected.
+`disable` and `remove` both stop tracking without deleting payment history.
+Every actual add, update, enable, disable, or remove operation creates a
+Telegram audit message. If Telegram is unavailable, that message remains in
+the durable SQLite outbox for the scheduled retry worker.
 
 Start the development server:
 
@@ -128,10 +133,66 @@ The endpoints are:
 ```text
 POST /api/apple/notifications
 GET  /api/health
+GET  /api/admin/apps
+PUT  /api/admin/apps/{bundleId}
+DELETE /api/admin/apps/{bundleId}
 ```
 
 For local Apple testing, expose port 3000 through an HTTPS tunnel. Do not use a
 temporary tunnel URL for production.
+
+## Protected app registry API
+
+Use this API from trusted automation instead of sharing a Coolify API token. It
+can only list, register, update, enable, or remove apps from payment tracking.
+It cannot deploy the service, read environment variables, or control other
+Coolify resources.
+
+Generate a dedicated 256-bit key:
+
+```bash
+openssl rand -hex 32
+```
+
+Store it as `IOS_PAYMENTS_ADMIN_API_KEY` in the service and in a
+permission-restricted operator environment outside every Git repository. Send
+it only in the `Authorization` header; never put it in a URL, command committed
+to Git, screenshot, or log.
+
+Register or update an app idempotently:
+
+```bash
+export IOS_PAYMENTS_ADMIN_API_URL=https://payments.example.com
+export IOS_PAYMENTS_ADMIN_API_KEY=replace-with-the-dedicated-key
+
+curl --fail-with-body \
+  --request PUT \
+  --header "Authorization: Bearer ${IOS_PAYMENTS_ADMIN_API_KEY}" \
+  --header "Content-Type: application/json" \
+  --data '{"name":"My App","appAppleId":1234567890}' \
+  "${IOS_PAYMENTS_ADMIN_API_URL}/api/admin/apps/com.example.myapp"
+```
+
+List all registered and removed apps:
+
+```bash
+curl --fail-with-body \
+  --header "Authorization: Bearer ${IOS_PAYMENTS_ADMIN_API_KEY}" \
+  "${IOS_PAYMENTS_ADMIN_API_URL}/api/admin/apps"
+```
+
+Remove an app from tracking while preserving its payment history:
+
+```bash
+curl --fail-with-body \
+  --request DELETE \
+  --header "Authorization: Bearer ${IOS_PAYMENTS_ADMIN_API_KEY}" \
+  "${IOS_PAYMENTS_ADMIN_API_URL}/api/admin/apps/com.example.myapp"
+```
+
+An exact repeated `PUT` or `DELETE` returns `action: "unchanged"` and does not
+send a duplicate Telegram audit message. Missing or incorrect credentials
+receive HTTP `401`.
 
 ## Configure App Store Connect
 
@@ -210,8 +271,9 @@ The named volume is mounted at `/data`, matching the default container
 1. Create an Application from this Git repository and select the included
    `Dockerfile`.
 2. Set container port `3000` and assign a public HTTPS domain.
-3. Add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, optional
-   `TELEGRAM_MESSAGE_THREAD_ID`, `DATABASE_PATH=/data/ios-payments.sqlite`, and
+3. Add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
+   `IOS_PAYMENTS_ADMIN_API_KEY`, optional `TELEGRAM_MESSAGE_THREAD_ID`,
+   `DATABASE_PATH=/data/ios-payments.sqlite`, and
    `APPLE_ENABLE_ONLINE_CHECKS=true`.
 4. Add persistent volume storage with destination path `/data`. Coolify's
    [persistent storage guide](https://coolify.io/docs/knowledge-base/persistent-storage)
@@ -247,8 +309,12 @@ queue.
 - Nested transaction and renewal values are verified, not merely decoded.
 - Request bodies are limited to 512 KiB and parsed as UTF-8 JSON.
 - SQL uses parameterized statements; app input is validated.
+- App-management API access uses a separate high-entropy bearer key compared
+  in constant time; responses are marked `no-store`.
 - Duplicate Apple deliveries are idempotent by `notificationUUID`.
 - Telegram HTML is escaped, and the bot token is never logged.
+- Registry audit messages use a durable SQLite outbox and the same retry worker
+  as payment notifications.
 - Raw JWS values, `appAccountToken`, and external purchase tokens are not
   retained in the sanitized database payload.
 - `.env`, SQLite files, logs, builds, and editor files are excluded from Git.

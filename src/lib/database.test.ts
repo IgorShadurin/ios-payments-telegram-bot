@@ -106,4 +106,39 @@ describe("AppDatabase", () => {
     });
     expect(database.pendingCount()).toBe(1);
   });
+
+  it("stores registry messages in a durable Telegram outbox", () => {
+    const queued = database.enqueueTelegramMessage(
+      "registry:add:com.example.app:1",
+      "app_registry",
+      "<b>App registered</b>",
+    );
+    expect(queued.created).toBe(true);
+    expect(
+      database.enqueueTelegramMessage(
+        "registry:add:com.example.app:1",
+        "app_registry",
+        "<b>App registered</b>",
+      ).created,
+    ).toBe(false);
+
+    const claimed = database.claimTelegramOutboxMessage(queued.message.id);
+    expect(claimed?.deliveryStatus).toBe("sending");
+    database.markTelegramOutboxForRetry(
+      queued.message.id,
+      "Temporary failure",
+      Date.now(),
+    );
+    expect(database.pendingTelegramOutboxCount()).toBe(1);
+
+    expect(database.claimDueTelegramOutboxMessages(10)).toHaveLength(1);
+    database.markTelegramOutboxDelivered(queued.message.id, 77);
+    expect(
+      database.getTelegramOutboxMessageById(queued.message.id),
+    ).toMatchObject({
+      deliveryStatus: "delivered",
+      deliveryAttempts: 2,
+      telegramMessageId: 77,
+    });
+  });
 });

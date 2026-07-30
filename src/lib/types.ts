@@ -67,3 +67,17 @@ export interface NewNotification {
   event: PaymentEvent;
   messageHtml: string;
 }
+
+export interface StoredTelegramOutboxMessage {
+  id: number;
+  deduplicationKey: string;
+  category: string;
+  messageHtml: string;
+  deliveryStatus: DeliveryStatus;
+  deliveryAttempts: number;
+  nextAttemptAt: number;
+  lastError?: string;
+  telegramMessageId?: number;
+  createdAt: number;
+  deliveredAt?: number;
+}
