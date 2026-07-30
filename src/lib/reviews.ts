@@ -4,6 +4,7 @@ import type {
   CustomerReview,
   CustomerReviewWithMessage,
   RegisteredApp,
+  StoredCustomerReviewWithApp,
 } from "./types";
 
 const MAX_PAGES_PER_APP = 5;
@@ -26,10 +27,11 @@ function formatReviewDate(value: string): string {
 export function formatCustomerReviewMessage(
   app: RegisteredApp,
   review: CustomerReview,
+  options: { existing?: boolean } = {},
 ): string {
   const stars = `${"★".repeat(review.rating)}${"☆".repeat(5 - review.rating)}`;
   const lines = [
-    "<b>⭐ New App Store review</b>",
+    `<b>⭐ ${options.existing ? "Existing" : "New"} App Store review</b>`,
     `<b>App:</b> ${escapeTelegramHtml(app.name)} (${escapeTelegramHtml(
       app.bundleId,
     )})`,
@@ -67,6 +69,28 @@ export interface ReviewPollResult {
   stored: number;
   queued: number;
   failed: number;
+}
+
+export function queueStoredCustomerReviewNotifications(
+  database: AppDatabase,
+  reviews: readonly StoredCustomerReviewWithApp[],
+): { queued: number; outboxMessageIds: number[] } {
+  const outboxMessageIds: number[] = [];
+  for (const review of reviews) {
+    const app = database.getAppById(review.appId);
+    if (!app) {
+      continue;
+    }
+    const queued = database.enqueueTelegramMessage(
+      `app-review:${review.id}`,
+      "app_review",
+      formatCustomerReviewMessage(app, review, { existing: true }),
+    );
+    if (queued.created) {
+      outboxMessageIds.push(queued.message.id);
+    }
+  }
+  return { queued: outboxMessageIds.length, outboxMessageIds };
 }
 
 export async function pollCustomerReviews(

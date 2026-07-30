@@ -286,13 +286,16 @@ Manually poll Apple for reviews and return up to 100 reviews stored in SQLite:
 curl --fail-with-body \
   --request POST \
   --header "Authorization: Bearer ${IOS_PAYMENTS_ADMIN_API_KEY}" \
-  "${IOS_PAYMENTS_ADMIN_API_URL}/api/admin/reviews?limit=100"
+  "${IOS_PAYMENTS_ADMIN_API_URL}/api/admin/reviews?limit=100&notify=true"
 ```
 
 The response includes the poll summary, bundle IDs that failed, and stored
-review details. New review IDs are also placed in the durable Telegram outbox.
-The existing one-minute delivery worker sends them; the API does not bypass the
-queue.
+review details. `notify=true` also places the returned stored reviews in the
+durable Telegram outbox, including reviews that were silently stored during
+the initial baseline. Delivery is attempted immediately after the response and
+retried by the existing one-minute worker if Telegram is unavailable. Apple's
+review ID remains the deduplication key, so repeating the request does not send
+the same review again.
 
 Read already-stored reviews without contacting Apple:
 
@@ -302,9 +305,10 @@ curl --fail-with-body \
   "${IOS_PAYMENTS_ADMIN_API_URL}/api/admin/reviews?limit=100"
 ```
 
-`limit` defaults to `50` and must be from `1` to `200`. Both endpoints require
-the dedicated admin bearer key, return `Cache-Control: no-store`, and never
-return the App Store Connect private key or temporary JWT.
+`limit` defaults to `50` and must be from `1` to `200`. `notify` defaults to
+`false` and accepts only `true` or `false`. Both endpoints require the dedicated
+admin bearer key, return `Cache-Control: no-store`, and never return the App
+Store Connect private key or temporary JWT.
 
 ## Configure App Store Connect
 

@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppDatabase } from "./database";
-import { formatCustomerReviewMessage, pollCustomerReviews } from "./reviews";
+import {
+  formatCustomerReviewMessage,
+  pollCustomerReviews,
+  queueStoredCustomerReviewNotifications,
+} from "./reviews";
 import type { CustomerReview } from "./types";
 
 let directory: string;
@@ -79,5 +83,34 @@ describe("customer review polling", () => {
     expect(message).toContain("&lt;b&gt;fake&lt;/b&gt; &amp;");
     expect(message).not.toContain("<b>fake</b>");
     expect(message).toContain("★★★★☆ (4/5)");
+  });
+
+  it("manually queues a baseline review once without creating duplicates", () => {
+    const app = database.getAppByBundleId("com.example.app");
+    if (!app) {
+      throw new Error("Test app not found");
+    }
+    database.storeCustomerReviewBatch(app.id, [
+      {
+        ...review("baseline-review"),
+        messageHtml: "<b>silent baseline</b>",
+      },
+    ]);
+    const stored = database.listCustomerReviews();
+
+    expect(
+      queueStoredCustomerReviewNotifications(database, stored),
+    ).toMatchObject({ queued: 1 });
+    expect(queueStoredCustomerReviewNotifications(database, stored)).toEqual({
+      queued: 0,
+      outboxMessageIds: [],
+    });
+    expect(
+      database.getTelegramOutboxMessageByKey("app-review:baseline-review"),
+    ).toMatchObject({
+      category: "app_review",
+      deliveryStatus: "pending",
+      messageHtml: expect.stringContaining("Existing App Store review"),
+    });
   });
 });
