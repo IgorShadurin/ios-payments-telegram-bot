@@ -72,6 +72,100 @@ function formatPrice(price: number, currency?: string): string {
   }
 }
 
+function environmentLabel(environment: string): {
+  titleTag?: string;
+  detail: string;
+  isTest: boolean;
+} {
+  if (environment.toLowerCase() === "sandbox") {
+    return {
+      titleTag: "SANDBOX",
+      detail: "Sandbox (test only; no real charge)",
+      isTest: true,
+    };
+  }
+  if (environment.toLowerCase() === "production") {
+    return {
+      titleTag: "PRODUCTION",
+      detail: "Production (live App Store data)",
+      isTest: false,
+    };
+  }
+  return {
+    detail: environment,
+    isTest: false,
+  };
+}
+
+function titleWithEnvironment(title: string, titleTag?: string): string {
+  if (!titleTag) {
+    return title;
+  }
+  const separator = title.indexOf(" ");
+  if (separator === -1) {
+    return `[${titleTag}] ${title}`;
+  }
+  return `${title.slice(0, separator)} [${titleTag}]${title.slice(separator)}`;
+}
+
+function paymentTypeLabel(event: PaymentEvent): string | undefined {
+  const productTypes: Record<string, string> = {
+    "Auto-Renewable Subscription": "Auto-renewable subscription",
+    "Non-Renewing Subscription": "Non-renewing subscription",
+    "Non-Consumable": "One-time purchase (non-consumable)",
+    Consumable: "One-time purchase (consumable)",
+  };
+  if (event.productType) {
+    return productTypes[event.productType] ?? event.productType;
+  }
+  if (
+    event.notificationType === "SUBSCRIBED" ||
+    event.notificationType === "DID_RENEW" ||
+    event.expiresDate !== undefined ||
+    event.autoRenewProductId !== undefined
+  ) {
+    return "Auto-renewable subscription";
+  }
+  if (event.notificationType === "ONE_TIME_CHARGE") {
+    return "One-time in-app purchase";
+  }
+  return undefined;
+}
+
+function actionLabel(event: PaymentEvent): string | undefined {
+  const key = `${event.notificationType}:${event.subtype ?? ""}`;
+  const exact: Record<string, string> = {
+    "SUBSCRIBED:INITIAL_BUY": "First subscription purchase",
+    "SUBSCRIBED:RESUBSCRIBE": "Subscription restarted after expiry",
+    "DID_RENEW:BILLING_RECOVERY": "Renewal after billing recovery",
+  };
+  if (exact[key]) {
+    return exact[key];
+  }
+
+  const actions: Record<string, string> = {
+    DID_RENEW: "Renewal of an existing subscription",
+    ONE_TIME_CHARGE: "New one-time purchase",
+    DID_FAIL_TO_RENEW: "Subscription renewal attempt failed",
+    EXPIRED: "Subscription access expired",
+    GRACE_PERIOD_EXPIRED: "Subscription grace period expired",
+    REFUND: "Refund issued",
+    REFUND_REVERSED: "Previously issued refund reversed",
+    REFUND_DECLINED: "Refund request declined",
+    REVOKE: "Purchase access revoked",
+  };
+  if (actions[event.notificationType]) {
+    return actions[event.notificationType];
+  }
+  if (event.transactionReason === "RENEWAL") {
+    return "Renewal of an existing subscription";
+  }
+  if (event.transactionReason === "PURCHASE") {
+    return "Customer-initiated purchase";
+  }
+  return undefined;
+}
+
 function line(
   label: string,
   value: string | number | undefined,
@@ -86,19 +180,27 @@ export function formatTelegramMessage(
   app: RegisteredApp,
   event: PaymentEvent,
 ): string {
+  const environment = environmentLabel(event.environment);
   const details = [
     line("App", `${app.name} (${app.bundleId})`),
+    line("Action", actionLabel(event)),
+    line("Payment type", paymentTypeLabel(event)),
+    line("Product", event.productId),
+    event.price !== undefined
+      ? line(
+          "Amount",
+          `${formatPrice(event.price, event.currency)}${
+            environment.isTest ? " (test price)" : ""
+          }`,
+        )
+      : undefined,
+    line("Environment", environment.detail),
     line(
       "Event",
       event.subtype
         ? `${event.notificationType} / ${event.subtype}`
         : event.notificationType,
     ),
-    line("Environment", event.environment),
-    line("Product", event.productId),
-    event.price !== undefined
-      ? line("Amount", formatPrice(event.price, event.currency))
-      : undefined,
     line("Transaction", event.transactionId),
     line("Original transaction", event.originalTransactionId),
     event.purchaseDate
@@ -116,7 +218,12 @@ export function formatTelegramMessage(
   ].filter((value): value is string => Boolean(value));
 
   return [
-    `<b>${escapeTelegramHtml(eventTitle(event.notificationType, event.subtype))}</b>`,
+    `<b>${escapeTelegramHtml(
+      titleWithEnvironment(
+        eventTitle(event.notificationType, event.subtype),
+        environment.titleTag,
+      ),
+    )}</b>`,
     ...details,
   ].join("\n");
 }

@@ -19,6 +19,8 @@ function makeEvent(overrides: Partial<PaymentEvent> = {}): PaymentEvent {
     environment: "Production",
     signedDate: 1_750_000_000_000,
     productId: "premium.monthly",
+    productType: "Auto-Renewable Subscription",
+    transactionReason: "RENEWAL",
     price: 4_990,
     currency: "USD",
     transactionId: "2000000123456789",
@@ -30,22 +32,56 @@ function makeEvent(overrides: Partial<PaymentEvent> = {}): PaymentEvent {
 describe("Telegram message formatting", () => {
   it("formats renewal details and Apple's milliunit price", () => {
     const message = formatTelegramMessage(app, makeEvent());
-    expect(message).toContain("Subscription renewed");
+    expect(message).toContain("✅ [PRODUCTION] Subscription renewed");
+    expect(message).toContain("Renewal of an existing subscription");
+    expect(message).toContain("Auto-renewable subscription");
     expect(message).toContain("$4.99");
     expect(message).toContain("premium.monthly");
     expect(message).toContain("Yum &amp; Cut");
   });
 
+  it("makes sandbox transactions unmistakably test-only", () => {
+    const message = formatTelegramMessage(
+      app,
+      makeEvent({ environment: "Sandbox" }),
+    );
+    expect(message).toContain("✅ [SANDBOX] Subscription renewed");
+    expect(message).toContain("Sandbox (test only; no real charge)");
+    expect(message).toContain("$4.99 (test price)");
+  });
+
+  it("distinguishes one-time purchases from subscriptions", () => {
+    const message = formatTelegramMessage(
+      app,
+      makeEvent({
+        notificationType: "ONE_TIME_CHARGE",
+        productType: "Non-Consumable",
+        transactionReason: "PURCHASE",
+      }),
+    );
+    expect(message).toContain("New one-time purchase");
+    expect(message).toContain("One-time purchase (non-consumable)");
+    expect(message).not.toContain("Renewal of an existing subscription");
+  });
+
   it("uses a strong title for initial subscriptions and refunds", () => {
-    expect(
-      formatTelegramMessage(
-        app,
-        makeEvent({ notificationType: "SUBSCRIBED", subtype: "INITIAL_BUY" }),
-      ),
-    ).toContain("New subscription");
-    expect(
-      formatTelegramMessage(app, makeEvent({ notificationType: "REFUND" })),
-    ).toContain("Refund");
+    const subscription = formatTelegramMessage(
+      app,
+      makeEvent({
+        notificationType: "SUBSCRIBED",
+        subtype: "INITIAL_BUY",
+        transactionReason: "PURCHASE",
+      }),
+    );
+    expect(subscription).toContain("New subscription");
+    expect(subscription).toContain("First subscription purchase");
+
+    const refund = formatTelegramMessage(
+      app,
+      makeEvent({ notificationType: "REFUND" }),
+    );
+    expect(refund).toContain("Refund");
+    expect(refund).toContain("Refund issued");
   });
 
   it("escapes Telegram HTML control characters", () => {

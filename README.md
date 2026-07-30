@@ -13,6 +13,11 @@ Telegram retry queues, Docker support, and a Coolify-ready health endpoint.
 
 ## What it reports
 
+Every alert title includes an unmistakable `[PRODUCTION]` or `[SANDBOX]` label.
+Sandbox details explicitly say `test only; no real charge`. Transaction alerts
+also state the action and Apple product type, so a first purchase, subscription
+renewal, one-time purchase, and refund are visibly different.
+
 Messages have specific titles for important events, including:
 
 - new subscription and resubscription;
