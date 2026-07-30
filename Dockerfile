@@ -30,6 +30,7 @@ RUN apt-get update \
   && chown nextjs:nodejs /data
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=dependencies --chown=nextjs:nodejs /app/node_modules/zod ./node_modules/zod
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/dist ./dist
