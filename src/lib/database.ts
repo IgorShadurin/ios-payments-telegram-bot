@@ -8,6 +8,7 @@ import type {
   NewNotification,
   RegisteredApp,
   StoredCustomerReview,
+  StoredCustomerReviewWithApp,
   StoredNotification,
   StoredTelegramOutboxMessage,
 } from "./types";
@@ -70,6 +71,11 @@ interface CustomerReviewRow {
   territory: string;
   created_date: string;
   first_seen_at: number;
+}
+
+interface CustomerReviewWithAppRow extends CustomerReviewRow {
+  app_name: string;
+  bundle_id: string;
 }
 
 function mapApp(row: AppRow): RegisteredApp {
@@ -138,6 +144,16 @@ function mapCustomerReview(row: CustomerReviewRow): StoredCustomerReview {
     territory: row.territory,
     createdDate: row.created_date,
     firstSeenAt: row.first_seen_at,
+  };
+}
+
+function mapCustomerReviewWithApp(
+  row: CustomerReviewWithAppRow,
+): StoredCustomerReviewWithApp {
+  return {
+    ...mapCustomerReview(row),
+    appName: row.app_name,
+    bundleId: row.bundle_id,
   };
 }
 
@@ -600,6 +616,24 @@ export class AppDatabase {
             )
             .get(appId) as { count: number });
     return row.count;
+  }
+
+  listCustomerReviews(limit = 50): StoredCustomerReviewWithApp[] {
+    const rows = this.database
+      .prepare(
+        `SELECT
+          customer_reviews.*,
+          apps.name AS app_name,
+          apps.bundle_id
+        FROM customer_reviews
+        INNER JOIN apps ON apps.id = customer_reviews.app_id
+        ORDER BY customer_reviews.created_date DESC,
+                 customer_reviews.first_seen_at DESC,
+                 customer_reviews.review_id
+        LIMIT ?`,
+      )
+      .all(limit) as CustomerReviewWithAppRow[];
+    return rows.map(mapCustomerReviewWithApp);
   }
 
   insertNotification(input: NewNotification): {

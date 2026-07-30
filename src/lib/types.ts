@@ -101,6 +101,11 @@ export interface StoredCustomerReview extends CustomerReview {
   firstSeenAt: number;
 }
 
+export interface StoredCustomerReviewWithApp extends StoredCustomerReview {
+  appName: string;
+  bundleId: string;
+}
+
 export interface CustomerReviewBatchResult {
   baselineCreated: boolean;
   stored: number;

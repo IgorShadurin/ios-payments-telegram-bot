@@ -178,5 +178,13 @@ describe("AppDatabase", () => {
       appId: app.id,
       rating: 5,
     });
+    expect(database.listCustomerReviews(1)).toEqual([
+      expect.objectContaining({
+        id: "review-new",
+        appName: "Example",
+        bundleId: "com.example.app",
+        body: "Works well",
+      }),
+    ]);
   });
 });

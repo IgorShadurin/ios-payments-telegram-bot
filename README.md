@@ -196,6 +196,8 @@ GET  /api/health
 GET  /api/admin/apps
 PUT  /api/admin/apps/{bundleId}
 DELETE /api/admin/apps/{bundleId}
+GET  /api/admin/reviews
+POST /api/admin/reviews
 ```
 
 For local Apple testing, expose port 3000 through an HTTPS tunnel. Do not use a
@@ -228,8 +230,9 @@ URL, secret, or approved-user list.
 
 Use this API from trusted automation instead of sharing a Coolify API token. It
 can only list, register, update, enable, or remove apps from payment tracking.
-It cannot deploy the service, read environment variables, or control other
-Coolify resources.
+It can also trigger an App Store review poll and read reviews stored by this
+service. It cannot deploy the service, read environment variables, or control
+other Coolify resources.
 
 Generate a dedicated 256-bit key:
 
@@ -276,6 +279,32 @@ curl --fail-with-body \
 An exact repeated `PUT` or `DELETE` returns `action: "unchanged"` and does not
 send a duplicate Telegram audit message. Missing or incorrect credentials
 receive HTTP `401`.
+
+Manually poll Apple for reviews and return up to 100 reviews stored in SQLite:
+
+```bash
+curl --fail-with-body \
+  --request POST \
+  --header "Authorization: Bearer ${IOS_PAYMENTS_ADMIN_API_KEY}" \
+  "${IOS_PAYMENTS_ADMIN_API_URL}/api/admin/reviews?limit=100"
+```
+
+The response includes the poll summary, bundle IDs that failed, and stored
+review details. New review IDs are also placed in the durable Telegram outbox.
+The existing one-minute delivery worker sends them; the API does not bypass the
+queue.
+
+Read already-stored reviews without contacting Apple:
+
+```bash
+curl --fail-with-body \
+  --header "Authorization: Bearer ${IOS_PAYMENTS_ADMIN_API_KEY}" \
+  "${IOS_PAYMENTS_ADMIN_API_URL}/api/admin/reviews?limit=100"
+```
+
+`limit` defaults to `50` and must be from `1` to `200`. Both endpoints require
+the dedicated admin bearer key, return `Cache-Control: no-store`, and never
+return the App Store Connect private key or temporary JWT.
 
 ## Configure App Store Connect
 
