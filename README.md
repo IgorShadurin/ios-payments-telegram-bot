@@ -345,6 +345,9 @@ The worker exits nonzero if any app fails, continues checking the other apps,
 and prints only the affected bundle ID and a sanitized error. It never prints
 the API token, private key, or review text. Run the existing delivery worker
 every minute to send queued review alerts and retry Telegram failures.
+Temporary network errors, Apple HTTP `429` rate limits, and Apple `5xx`
+responses are retried up to three times. Authentication, permission, and
+unknown-app errors fail immediately so configuration problems remain visible.
 
 ## Delivery queue and retries
 

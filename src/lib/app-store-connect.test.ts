@@ -140,4 +140,45 @@ describe("App Store Connect client", () => {
       ),
     ).rejects.toBeInstanceOf(AppStoreConnectError);
   });
+
+  it("retries temporary network failures before succeeding", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary timeout"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [], links: {} }), {
+          status: 200,
+        }),
+      );
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        "secret-token",
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).resolves.toEqual({ reviews: [], nextUrl: undefined });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledWith(500);
+  });
+
+  it("does not retry authorization failures", async () => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 403 }));
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        "secret-token",
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+  });
 });

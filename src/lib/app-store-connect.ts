@@ -1,4 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AppStoreConnectConfig } from "./config";
 import type { CustomerReview } from "./types";
@@ -42,10 +43,34 @@ export class AppStoreConnectError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "AppStoreConnectError";
   }
+}
+
+function retryAfterMs(header: string | null): number | undefined {
+  if (!header) {
+    return undefined;
+  }
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1_000, 10_000);
+  }
+  const date = Date.parse(header);
+  return Number.isFinite(date)
+    ? Math.min(Math.max(0, date - Date.now()), 10_000)
+    : undefined;
+}
+
+function isRetryable(error: unknown): error is AppStoreConnectError {
+  return (
+    error instanceof AppStoreConnectError &&
+    (error.status === undefined ||
+      error.status === 429 ||
+      (error.status >= 500 && error.status <= 599))
+  );
 }
 
 function encodeJson(value: unknown): string {
@@ -146,16 +171,12 @@ async function readResponseBody(response: Response): Promise<unknown> {
   }
 }
 
-export async function fetchCustomerReviewPage(
+async function fetchCustomerReviewPageOnce(
   appAppleId: number,
   token: string,
-  nextUrl?: string,
+  url: URL,
   fetchImplementation: typeof fetch = fetch,
 ): Promise<CustomerReviewPage> {
-  const url = validateReviewUrl(
-    nextUrl ?? initialReviewUrl(appAppleId),
-    appAppleId,
-  );
   let response: Response;
   try {
     response = await fetchImplementation(url, {
@@ -174,6 +195,7 @@ export async function fetchCustomerReviewPage(
     throw new AppStoreConnectError(
       `App Store Connect rejected the request with HTTP ${response.status}`,
       response.status,
+      retryAfterMs(response.headers.get("retry-after")),
     );
   }
 
@@ -195,4 +217,35 @@ export async function fetchCustomerReviewPage(
     })),
     nextUrl: validatedNextUrl,
   };
+}
+
+export async function fetchCustomerReviewPage(
+  appAppleId: number,
+  token: string,
+  nextUrl?: string,
+  fetchImplementation: typeof fetch = fetch,
+  wait: (milliseconds: number) => Promise<unknown> = delay,
+): Promise<CustomerReviewPage> {
+  const url = validateReviewUrl(
+    nextUrl ?? initialReviewUrl(appAppleId),
+    appAppleId,
+  );
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await fetchCustomerReviewPageOnce(
+        appAppleId,
+        token,
+        url,
+        fetchImplementation,
+      );
+    } catch (error) {
+      lastError = error;
+      if (!isRetryable(error) || attempt === 2) {
+        throw error;
+      }
+      await wait(error.retryAfterMs ?? [500, 1_500][attempt]);
+    }
+  }
+  throw lastError;
 }
