@@ -26,18 +26,34 @@ export class TelegramDeliveryError extends Error {
   }
 }
 
+export interface TelegramMessageOptions {
+  chatId?: string;
+  messageThreadId?: number;
+  replyToMessageId?: number;
+}
+
 export async function sendTelegramMessage(
   messageHtml: string,
+  options: TelegramMessageOptions = {},
 ): Promise<number> {
   const config = getTelegramConfig();
   const requestBody: Record<string, unknown> = {
-    chat_id: config.chatId,
+    chat_id: options.chatId ?? config.chatId,
     text: messageHtml,
     parse_mode: "HTML",
     link_preview_options: { is_disabled: true },
   };
-  if (config.messageThreadId) {
-    requestBody.message_thread_id = config.messageThreadId;
+  const messageThreadId =
+    options.messageThreadId ??
+    (options.chatId === undefined ? config.messageThreadId : undefined);
+  if (messageThreadId) {
+    requestBody.message_thread_id = messageThreadId;
+  }
+  if (options.replyToMessageId) {
+    requestBody.reply_parameters = {
+      message_id: options.replyToMessageId,
+      allow_sending_without_reply: true,
+    };
   }
 
   let response: Response;

@@ -6,8 +6,8 @@ SQLite first, so a Telegram outage does not lose payment data.
 
 This is a small TypeScript/Next.js service for App Store Server Notifications
 V2. It has one shared webhook URL for all registered apps, a protected app
-registry API, a command-line registry, durable Telegram retry queues, Docker
-support, and a Coolify-ready health endpoint.
+registry API, owner-only Telegram commands, a command-line registry, durable
+Telegram retry queues, Docker support, and a Coolify-ready health endpoint.
 
 ## What it reports
 
@@ -75,6 +75,8 @@ Edit `.env`:
 ```dotenv
 TELEGRAM_BOT_TOKEN=replace-with-your-real-bot-token
 TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_ALLOWED_USER_IDS=123456789
+TELEGRAM_WEBHOOK_SECRET=replace-with-a-random-64-character-hex-secret
 IOS_PAYMENTS_ADMIN_API_KEY=replace-with-a-random-64-character-hex-key
 DATABASE_PATH=./data/ios-payments.sqlite
 APPLE_ENABLE_ONLINE_CHECKS=true
@@ -85,6 +87,28 @@ supergroup ID. Send the bot a message, then use Telegram's
 [`getUpdates`](https://core.telegram.org/bots/api#getupdates) method to inspect
 the resulting `message.chat.id`. If the destination is a forum topic, also set
 `TELEGRAM_MESSAGE_THREAD_ID`.
+
+`TELEGRAM_ALLOWED_USER_IDS` is a comma-separated allowlist of Telegram user
+IDs. Commands work only when an allowlisted user sends them in that user's
+private chat with the bot. The bot returns no message for other users, bots,
+groups, supergroups, or channels.
+
+Generate the webhook secret independently:
+
+```bash
+openssl rand -hex 32
+```
+
+The approved private-chat commands are:
+
+```text
+/apps  Show enabled tracked iOS apps
+/help  Show every command
+/start Show every command
+```
+
+Unknown commands, ordinary text, and unsupported messages from an approved
+user return the complete command list.
 
 Register every app before accepting its notifications:
 
@@ -132,6 +156,7 @@ The endpoints are:
 
 ```text
 POST /api/apple/notifications
+POST /api/telegram/webhook
 GET  /api/health
 GET  /api/admin/apps
 PUT  /api/admin/apps/{bundleId}
@@ -140,6 +165,29 @@ DELETE /api/admin/apps/{bundleId}
 
 For local Apple testing, expose port 3000 through an HTTPS tunnel. Do not use a
 temporary tunnel URL for production.
+
+## Configure Telegram commands
+
+After deploying the HTTPS service, register its webhook and command menu:
+
+```bash
+npm run build
+npm run telegram:configure -- \
+  --url https://payments.example.com/api/telegram/webhook
+```
+
+This command reads `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and
+`TELEGRAM_ALLOWED_USER_IDS` from the environment. It:
+
+- registers only `message` updates with Telegram's secret webhook header;
+- drops messages that arrived before command handling was enabled;
+- removes any default/global command menu;
+- sets the command menu only for each approved private chat;
+- reads the webhook configuration back without printing either secret.
+
+Telegram retries webhook updates when the endpoint does not return a successful
+HTTP response. Run the configuration command again after changing the webhook
+URL, secret, or approved-user list.
 
 ## Protected app registry API
 
@@ -272,6 +320,7 @@ The named volume is mounted at `/data`, matching the default container
    `Dockerfile`.
 2. Set container port `3000` and assign a public HTTPS domain.
 3. Add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
+   `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_WEBHOOK_SECRET`,
    `IOS_PAYMENTS_ADMIN_API_KEY`, optional `TELEGRAM_MESSAGE_THREAD_ID`,
    `DATABASE_PATH=/data/ios-payments.sqlite`, and
    `APPLE_ENABLE_ONLINE_CHECKS=true`.
@@ -297,6 +346,12 @@ The named volume is mounted at `/data`, matching the default container
    ```
 
 9. Configure the resulting HTTPS webhook URL in every app in App Store Connect.
+10. Run the Telegram configuration command in the deployed container:
+
+    ```bash
+    node dist/scripts/configure-telegram.js \
+      --url https://payments.example.com/api/telegram/webhook
+    ```
 
 Back up the `/data` volume. The SQLite database is the event history and retry
 queue.
@@ -311,6 +366,9 @@ queue.
 - SQL uses parameterized statements; app input is validated.
 - App-management API access uses a separate high-entropy bearer key compared
   in constant time; responses are marked `no-store`.
+- Incoming Telegram commands require Telegram's high-entropy webhook secret,
+  an approved sender ID, and a matching private chat. Unapproved messages are
+  acknowledged without a reply or identifying log.
 - Duplicate Apple deliveries are idempotent by `notificationUUID`.
 - Telegram HTML is escaped, and the bot token is never logged.
 - Registry audit messages use a durable SQLite outbox and the same retry worker
