@@ -12,9 +12,11 @@
   "include": [
     "scripts/**/*.ts",
     "src/lib/config.ts",
+    "src/lib/app-store-connect.ts",
     "src/lib/database.ts",
     "src/lib/delivery.ts",
     "src/lib/message.ts",
+    "src/lib/reviews.ts",
     "src/lib/telegram.ts",
     "src/lib/types.ts"
   ],

@@ -141,4 +141,42 @@ describe("AppDatabase", () => {
       telegramMessageId: 77,
     });
   });
+
+  it("stores review batches and does not alert for the initial baseline", () => {
+    const app = database.addApp("Example", "com.example.app", 123456789);
+    const oldReview = {
+      id: "review-old",
+      rating: 5,
+      title: "Great",
+      body: "Works well",
+      reviewerNickname: "Customer",
+      territory: "USA",
+      createdDate: "2026-07-30T08:00:00Z",
+      messageHtml: "<b>Old review</b>",
+    };
+    expect(database.storeCustomerReviewBatch(app.id, [oldReview])).toEqual({
+      baselineCreated: true,
+      stored: 1,
+      queued: 0,
+    });
+
+    expect(
+      database.storeCustomerReviewBatch(app.id, [
+        oldReview,
+        {
+          ...oldReview,
+          id: "review-new",
+          messageHtml: "<b>New review</b>",
+        },
+      ]),
+    ).toEqual({
+      baselineCreated: false,
+      stored: 1,
+      queued: 1,
+    });
+    expect(database.getCustomerReview("review-new")).toMatchObject({
+      appId: app.id,
+      rating: 5,
+    });
+  });
 });

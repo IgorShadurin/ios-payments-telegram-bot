@@ -24,6 +24,13 @@ export interface TelegramWebhookConfig {
   allowedUserIds: ReadonlySet<string>;
 }
 
+export interface AppStoreConnectConfig {
+  keyType: "team" | "individual";
+  issuerId?: string;
+  keyId: string;
+  privateKey: string;
+}
+
 export function getTelegramConfig(): TelegramConfig {
   const schema = z.object({
     TELEGRAM_BOT_TOKEN: z
@@ -106,4 +113,67 @@ export function appleOnlineChecksEnabled(): boolean {
   return (
     process.env.APPLE_ENABLE_ONLINE_CHECKS?.trim().toLowerCase() !== "false"
   );
+}
+
+function decodePrivateKeyBase64(value: string): string {
+  if (
+    value.length > 20_000 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      value,
+    )
+  ) {
+    throw new Error(
+      "App Store Connect configuration is invalid: APP_STORE_CONNECT_PRIVATE_KEY_BASE64",
+    );
+  }
+  return Buffer.from(value, "base64").toString("utf8");
+}
+
+export function getAppStoreConnectConfig(): AppStoreConnectConfig {
+  const schema = z.object({
+    APP_STORE_CONNECT_KEY_TYPE: z.enum(["team", "individual"]).default("team"),
+    APP_STORE_CONNECT_ISSUER_ID: z.string().uuid().optional(),
+    APP_STORE_CONNECT_KEY_ID: z
+      .string()
+      .min(3)
+      .max(64)
+      .regex(/^[A-Za-z0-9]+$/),
+    APP_STORE_CONNECT_PRIVATE_KEY: z.string().min(100).max(20_000).optional(),
+    APP_STORE_CONNECT_PRIVATE_KEY_BASE64: z
+      .string()
+      .min(100)
+      .max(20_000)
+      .optional(),
+  });
+  const parsed = schema.safeParse(process.env);
+  if (!parsed.success) {
+    throw new Error(
+      `App Store Connect configuration is invalid: ${parsed.error.issues
+        .map((issue) => issue.path.join("."))
+        .join(", ")}`,
+    );
+  }
+
+  const rawKey = parsed.data.APP_STORE_CONNECT_PRIVATE_KEY;
+  const base64Key = parsed.data.APP_STORE_CONNECT_PRIVATE_KEY_BASE64;
+  if ((rawKey ? 1 : 0) + (base64Key ? 1 : 0) !== 1) {
+    throw new Error(
+      "App Store Connect configuration is invalid: set exactly one private-key variable",
+    );
+  }
+  if (
+    parsed.data.APP_STORE_CONNECT_KEY_TYPE === "team" &&
+    !parsed.data.APP_STORE_CONNECT_ISSUER_ID
+  ) {
+    throw new Error(
+      "App Store Connect configuration is invalid: team keys require APP_STORE_CONNECT_ISSUER_ID",
+    );
+  }
+
+  return {
+    keyType: parsed.data.APP_STORE_CONNECT_KEY_TYPE,
+    issuerId: parsed.data.APP_STORE_CONNECT_ISSUER_ID,
+    keyId: parsed.data.APP_STORE_CONNECT_KEY_ID,
+    privateKey: rawKey ?? decodePrivateKeyBase64(base64Key ?? ""),
+  };
 }

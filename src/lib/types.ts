@@ -81,3 +81,28 @@ export interface StoredTelegramOutboxMessage {
   createdAt: number;
   deliveredAt?: number;
 }
+
+export interface CustomerReview {
+  id: string;
+  rating: number;
+  title: string;
+  body: string;
+  reviewerNickname: string;
+  territory: string;
+  createdDate: string;
+}
+
+export interface CustomerReviewWithMessage extends CustomerReview {
+  messageHtml: string;
+}
+
+export interface StoredCustomerReview extends CustomerReview {
+  appId: number;
+  firstSeenAt: number;
+}
+
+export interface CustomerReviewBatchResult {
+  baselineCreated: boolean;
+  stored: number;
+  queued: number;
+}

@@ -2,7 +2,7 @@
   "name": "ios-payments-telegram-bot",
   "version": "1.2.0",
   "private": true,
-  "description": "Receive verified App Store Server Notifications from multiple iOS apps and forward them to Telegram.",
+  "description": "Never miss iOS app payments, refunds, subscription changes, or new App Store reviews in Telegram.",
   "scripts": {
     "dev": "next dev",
     "build": "next build && tsc -p tsconfig.cli.json",
@@ -15,6 +15,8 @@
     "apps:dev": "tsx scripts/apps.ts",
     "deliver": "node dist/scripts/deliver.js",
     "deliver:dev": "tsx scripts/deliver.ts",
+    "reviews": "node dist/scripts/reviews.js",
+    "reviews:dev": "tsx scripts/reviews.ts",
     "telegram:configure": "node dist/scripts/configure-telegram.js",
     "telegram:configure:dev": "tsx scripts/configure-telegram.ts"
   },

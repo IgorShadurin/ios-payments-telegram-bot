@@ -1,17 +1,19 @@
 # iOS Payments Telegram Bot
 
-Never miss an App Store purchase, subscription renewal, billing failure, or
-refund across your iOS apps. This service verifies Apple's server
-notifications, stores every event in persistent SQLite, and sends clear
-Telegram alerts. If Telegram is temporarily unavailable, delivery is retried
-without losing the payment event.
+Never miss an App Store purchase, subscription renewal, billing failure,
+refund, or new customer review across your iOS apps. This service verifies
+Apple's payment notifications, securely checks App Store Connect for reviews,
+stores events in persistent SQLite, and sends clear Telegram alerts. If
+Telegram is temporarily unavailable, delivery is retried without losing the
+alert.
 
 This is a small TypeScript/Next.js service for App Store Server Notifications
 V2. It has one shared webhook URL for all registered apps, a protected app
-registry API, owner-only Telegram commands, a command-line registry, durable
-Telegram retry queues, Docker support, and a Coolify-ready health endpoint.
+registry API, owner-only Telegram commands, optional customer-review polling, a
+command-line registry, durable Telegram retry queues, Docker support, and a
+Coolify-ready health endpoint.
 
-## What it reports
+## Payment alerts
 
 Every alert title includes an unmistakable `[PRODUCTION]` or `[SANDBOX]` label.
 Sandbox titles use the `🧪` icon and the details explicitly say
@@ -32,6 +34,22 @@ Messages have specific titles for important events, including:
 The stored record also keeps useful verified fields such as product ID,
 transaction IDs, environment, price, currency, purchase date, expiry date, and
 renewal date.
+
+## Customer-review alerts
+
+The optional review worker uses Apple's official App Store Connect API to check
+every enabled app for new written reviews. An alert shows the app, star rating,
+title, review text, reviewer nickname, territory, and creation date.
+
+Apple does not include customer reviews in App Store Server Notifications or
+its App Store Connect webhook event types, so review alerts use scheduled
+polling instead of a webhook. Review API responses require a short-lived ES256
+token signed with an App Store Connect API key.
+
+The first successful poll for each app creates a silent baseline from its most
+recent reviews. It does not send old reviews. Later polls store and enqueue only
+previously unseen Apple review IDs. Up to 1,000 reviews per app can be scanned
+in one run, and the poll stops early when it reaches a known review.
 
 ## How verification works
 
@@ -69,6 +87,9 @@ and [delivery retries](https://developer.apple.com/documentation/appstoreservern
 - each app's bundle ID and numeric App Store ID;
 - HTTPS in production (Coolify supplies the reverse proxy and TLS).
 
+Review alerts additionally require an App Store Connect team or individual API
+key with permission to view the tracked apps' customer reviews.
+
 ## Local setup
 
 Install dependencies and create the local environment file:
@@ -88,6 +109,12 @@ TELEGRAM_WEBHOOK_SECRET=replace-with-a-random-64-character-hex-secret
 IOS_PAYMENTS_ADMIN_API_KEY=replace-with-a-random-64-character-hex-key
 DATABASE_PATH=./data/ios-payments.sqlite
 APPLE_ENABLE_ONLINE_CHECKS=true
+
+# Optional review polling:
+APP_STORE_CONNECT_KEY_TYPE=team
+APP_STORE_CONNECT_ISSUER_ID=00000000-0000-0000-0000-000000000000
+APP_STORE_CONNECT_KEY_ID=ABC123DEFG
+APP_STORE_CONNECT_PRIVATE_KEY_BASE64=replace-with-base64-encoded-p8
 ```
 
 `TELEGRAM_CHAT_ID` can be a private chat ID, a negative group/channel ID, or a
@@ -283,6 +310,42 @@ Expected accepted response:
 
 A fabricated or altered JWS receives an error and is never inserted.
 
+## Configure customer-review alerts
+
+Customer reviews need separate App Store Connect API credentials; they do not
+use the payment webhook's Apple signature verification.
+
+1. In App Store Connect, open **Users and Access → Integrations**.
+2. Create a team API key with the least privilege needed to view customer
+   reviews, such as **Customer Support**. Copy its issuer ID and key ID, and
+   download the `.p8` private key. Apple allows the private key to be downloaded
+   only once.
+3. Base64-encode the key without placing it in the repository:
+
+   ```bash
+   base64 < AuthKey_ABC123DEFG.p8 | tr -d '\n'
+   ```
+
+4. Store the result in the deployment secret
+   `APP_STORE_CONNECT_PRIVATE_KEY_BASE64`. Also set
+   `APP_STORE_CONNECT_KEY_TYPE=team`, `APP_STORE_CONNECT_ISSUER_ID`, and
+   `APP_STORE_CONNECT_KEY_ID`.
+5. Run the review worker every 10 minutes:
+
+   ```bash
+   node dist/scripts/reviews.js
+   ```
+
+For an individual API key, use
+`APP_STORE_CONNECT_KEY_TYPE=individual`, omit
+`APP_STORE_CONNECT_ISSUER_ID`, and set that key's ID and private key. The
+individual user's role and per-app access determine which reviews it can read.
+
+The worker exits nonzero if any app fails, continues checking the other apps,
+and prints only the affected bundle ID and a sanitized error. It never prints
+the API token, private key, or review text. Run the existing delivery worker
+every minute to send queued review alerts and retry Telegram failures.
+
 ## Delivery queue and retries
 
 The webhook commits a verified event to SQLite before acknowledging it. The
@@ -331,7 +394,8 @@ The named volume is mounted at `/data`, matching the default container
    `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_WEBHOOK_SECRET`,
    `IOS_PAYMENTS_ADMIN_API_KEY`, optional `TELEGRAM_MESSAGE_THREAD_ID`,
    `DATABASE_PATH=/data/ios-payments.sqlite`, and
-   `APPLE_ENABLE_ONLINE_CHECKS=true`.
+   `APPLE_ENABLE_ONLINE_CHECKS=true`. To enable review alerts, also add the
+   `APP_STORE_CONNECT_*` secrets described above.
 4. Add persistent volume storage with destination path `/data`. Coolify's
    [persistent storage guide](https://coolify.io/docs/knowledge-base/persistent-storage)
    explains named volumes and bind mounts.
@@ -353,8 +417,16 @@ The named volume is mounted at `/data`, matching the default container
    node dist/scripts/deliver.js --limit 100
    ```
 
-9. Configure the resulting HTTPS webhook URL in every app in App Store Connect.
-10. Run the Telegram configuration command in the deployed container:
+9. For reviews, add another Scheduled Task with cron expression
+   `*/10 * * * *` and command:
+
+   ```bash
+   node dist/scripts/reviews.js
+   ```
+
+10. Configure the resulting HTTPS webhook URL in every app in App Store
+    Connect.
+11. Run the Telegram configuration command in the deployed container:
 
     ```bash
     node dist/scripts/configure-telegram.js \
@@ -378,9 +450,11 @@ queue.
   an approved sender ID, and a matching private chat. Unapproved messages are
   acknowledged without a reply or identifying log.
 - Duplicate Apple deliveries are idempotent by `notificationUUID`.
+- Customer reviews are authenticated with a short-lived, P-256-signed App Store
+  Connect JWT and deduplicated by Apple's review resource ID.
 - Telegram HTML is escaped, and the bot token is never logged.
-- Registry audit messages use a durable SQLite outbox and the same retry worker
-  as payment notifications.
+- Registry and review messages use a durable SQLite outbox and the same retry
+  worker as payment notifications.
 - Raw JWS values, `appAccountToken`, and external purchase tokens are not
   retained in the sanitized database payload.
 - `.env`, SQLite files, logs, builds, and editor files are excluded from Git.
@@ -406,7 +480,8 @@ npm audit --omit=dev
 ```
 
 Tests cover certificate fingerprints, fake-signature rejection, routing hints,
-database migrations and app state, deduplication, delivery queue transitions,
+database migrations and app state, payment and review deduplication, App Store
+Connect JWT signing and response validation, delivery queue transitions,
 message escaping, price formatting, and body-size enforcement.
 
 ## Operational notes
@@ -420,8 +495,8 @@ message escaping, price formatting, and body-size enforcement.
   failed.
 - A `500`/`503` should be investigated; Apple will retry unsuccessful V2
   deliveries according to its documented schedule.
-- Never commit `.env`, `.p8` App Store keys, bot tokens, production databases,
-  database WAL files, or exported notification payloads.
+- Never commit `.env`, `.p8` App Store keys, encoded private keys, bot tokens,
+  production databases, database WAL files, or exported notification payloads.
 
 ## License
 

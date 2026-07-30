@@ -3,8 +3,11 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { getDatabasePath } from "./config";
 import type {
+  CustomerReviewBatchResult,
+  CustomerReviewWithMessage,
   NewNotification,
   RegisteredApp,
+  StoredCustomerReview,
   StoredNotification,
   StoredTelegramOutboxMessage,
 } from "./types";
@@ -55,6 +58,18 @@ interface TelegramOutboxRow {
   telegram_message_id: number | null;
   created_at: number;
   delivered_at: number | null;
+}
+
+interface CustomerReviewRow {
+  review_id: string;
+  app_id: number;
+  rating: number;
+  title: string;
+  body: string;
+  reviewer_nickname: string;
+  territory: string;
+  created_date: string;
+  first_seen_at: number;
 }
 
 function mapApp(row: AppRow): RegisteredApp {
@@ -112,6 +127,20 @@ function mapTelegramOutboxMessage(
   };
 }
 
+function mapCustomerReview(row: CustomerReviewRow): StoredCustomerReview {
+  return {
+    id: row.review_id,
+    appId: row.app_id,
+    rating: row.rating,
+    title: row.title,
+    body: row.body,
+    reviewerNickname: row.reviewer_nickname,
+    territory: row.territory,
+    createdDate: row.created_date,
+    firstSeenAt: row.first_seen_at,
+  };
+}
+
 export class AppDatabase {
   private readonly database: Database.Database;
 
@@ -129,7 +158,7 @@ export class AppDatabase {
       simple: true,
     }) as number;
 
-    if (version > 2) {
+    if (version > 3) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -208,6 +237,36 @@ export class AppDatabase {
             ON telegram_outbox_messages(delivery_status, next_attempt_at);
 
           PRAGMA user_version = 2;
+        `);
+      })();
+      version = 2;
+    }
+
+    if (version === 2) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE customer_reviews (
+            review_id TEXT PRIMARY KEY,
+            app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE RESTRICT,
+            rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            reviewer_nickname TEXT NOT NULL,
+            territory TEXT NOT NULL,
+            created_date TEXT NOT NULL,
+            first_seen_at INTEGER NOT NULL
+          );
+
+          CREATE INDEX customer_reviews_app_date_idx
+            ON customer_reviews(app_id, created_date DESC);
+
+          CREATE TABLE customer_review_poll_state (
+            app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE RESTRICT,
+            initialized_at INTEGER NOT NULL,
+            last_polled_at INTEGER NOT NULL
+          );
+
+          PRAGMA user_version = 3;
         `);
       })();
     }
@@ -448,6 +507,98 @@ export class AppDatabase {
          WHERE delivery_status != 'delivered'`,
       )
       .get() as { count: number };
+    return row.count;
+  }
+
+  storeCustomerReviewBatch(
+    appId: number,
+    reviews: readonly CustomerReviewWithMessage[],
+  ): CustomerReviewBatchResult {
+    return this.database.transaction(() => {
+      const now = Date.now();
+      const stateInsert = this.database
+        .prepare(
+          `INSERT INTO customer_review_poll_state (
+            app_id, initialized_at, last_polled_at
+          ) VALUES (?, ?, ?)
+          ON CONFLICT(app_id) DO NOTHING`,
+        )
+        .run(appId, now, now);
+      const baselineCreated = stateInsert.changes === 1;
+
+      if (!baselineCreated) {
+        this.database
+          .prepare(
+            "UPDATE customer_review_poll_state SET last_polled_at = ? WHERE app_id = ?",
+          )
+          .run(now, appId);
+      }
+
+      const insertReview = this.database.prepare(
+        `INSERT INTO customer_reviews (
+          review_id, app_id, rating, title, body, reviewer_nickname,
+          territory, created_date, first_seen_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(review_id) DO NOTHING`,
+      );
+      const insertOutbox = this.database.prepare(
+        `INSERT INTO telegram_outbox_messages (
+          deduplication_key, category, message_html, delivery_status,
+          next_attempt_at, created_at
+        ) VALUES (?, 'app_review', ?, 'pending', ?, ?)
+        ON CONFLICT(deduplication_key) DO NOTHING`,
+      );
+
+      let stored = 0;
+      let queued = 0;
+      for (const review of reviews) {
+        const result = insertReview.run(
+          review.id,
+          appId,
+          review.rating,
+          review.title,
+          review.body,
+          review.reviewerNickname,
+          review.territory,
+          review.createdDate,
+          now,
+        );
+        if (result.changes !== 1) {
+          continue;
+        }
+        stored += 1;
+        if (!baselineCreated) {
+          queued += insertOutbox.run(
+            `app-review:${review.id}`,
+            review.messageHtml,
+            now,
+            now,
+          ).changes;
+        }
+      }
+
+      return { baselineCreated, stored, queued };
+    })();
+  }
+
+  getCustomerReview(reviewId: string): StoredCustomerReview | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM customer_reviews WHERE review_id = ?")
+      .get(reviewId) as CustomerReviewRow | undefined;
+    return row ? mapCustomerReview(row) : undefined;
+  }
+
+  customerReviewCount(appId?: number): number {
+    const row =
+      appId === undefined
+        ? (this.database
+            .prepare("SELECT COUNT(*) AS count FROM customer_reviews")
+            .get() as { count: number })
+        : (this.database
+            .prepare(
+              "SELECT COUNT(*) AS count FROM customer_reviews WHERE app_id = ?",
+            )
+            .get(appId) as { count: number });
     return row.count;
   }
 
