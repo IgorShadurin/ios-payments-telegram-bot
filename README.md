@@ -1,8 +1,10 @@
 # iOS Payments Telegram Bot
 
-Receive verified payment and subscription events from several iOS apps and send
-clear notifications to one Telegram chat. Every event is saved in persistent
-SQLite first, so a Telegram outage does not lose payment data.
+Never miss an App Store purchase, subscription renewal, billing failure, or
+refund across your iOS apps. This service verifies Apple's server
+notifications, stores every event in persistent SQLite, and sends clear
+Telegram alerts. If Telegram is temporarily unavailable, delivery is retried
+without losing the payment event.
 
 This is a small TypeScript/Next.js service for App Store Server Notifications
 V2. It has one shared webhook URL for all registered apps, a protected app
