@@ -97,15 +97,23 @@ function environmentLabel(environment: string): {
   };
 }
 
-function titleWithEnvironment(title: string, titleTag?: string): string {
+function titleWithEnvironment(
+  title: string,
+  titleTag?: string,
+  iconOverride?: string,
+): string {
   if (!titleTag) {
     return title;
   }
   const separator = title.indexOf(" ");
   if (separator === -1) {
-    return `[${titleTag}] ${title}`;
+    return iconOverride
+      ? `${iconOverride} [${titleTag}] ${title}`
+      : `[${titleTag}] ${title}`;
   }
-  return `${title.slice(0, separator)} [${titleTag}]${title.slice(separator)}`;
+  return `${iconOverride ?? title.slice(0, separator)} [${titleTag}]${title.slice(
+    separator,
+  )}`;
 }
 
 function paymentTypeLabel(event: PaymentEvent): string | undefined {
@@ -222,6 +230,7 @@ export function formatTelegramMessage(
       titleWithEnvironment(
         eventTitle(event.notificationType, event.subtype),
         environment.titleTag,
+        environment.isTest ? "🧪" : undefined,
       ),
     )}</b>`,
     ...details,

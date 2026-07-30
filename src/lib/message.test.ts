@@ -45,7 +45,8 @@ describe("Telegram message formatting", () => {
       app,
       makeEvent({ environment: "Sandbox" }),
     );
-    expect(message).toContain("✅ [SANDBOX] Subscription renewed");
+    expect(message).toContain("🧪 [SANDBOX] Subscription renewed");
+    expect(message).not.toContain("✅ [SANDBOX]");
     expect(message).toContain("Sandbox (test only; no real charge)");
     expect(message).toContain("$4.99 (test price)");
   });
