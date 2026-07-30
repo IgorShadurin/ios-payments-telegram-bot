@@ -15,6 +15,7 @@
     "src/lib/app-store-connect.ts",
     "src/lib/database.ts",
     "src/lib/delivery.ts",
+    "src/lib/exchange-rates.ts",
     "src/lib/message.ts",
     "src/lib/reviews.ts",
     "src/lib/telegram.ts",

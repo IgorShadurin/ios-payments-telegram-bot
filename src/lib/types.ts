@@ -111,3 +111,12 @@ export interface CustomerReviewBatchResult {
   stored: number;
   queued: number;
 }
+
+export interface ExchangeRate {
+  currencyCode: string;
+  unitsPerUsd: number;
+  sourceUpdatedAt: number;
+  nextUpdateAt: number;
+  fetchedAt: number;
+  provider: string;
+}

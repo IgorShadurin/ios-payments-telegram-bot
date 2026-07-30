@@ -17,6 +17,8 @@
     "deliver:dev": "tsx scripts/deliver.ts",
     "reviews": "node dist/scripts/reviews.js",
     "reviews:dev": "tsx scripts/reviews.ts",
+    "rates": "node dist/scripts/rates.js",
+    "rates:dev": "tsx scripts/rates.ts",
     "telegram:configure": "node dist/scripts/configure-telegram.js",
     "telegram:configure:dev": "tsx scripts/configure-telegram.ts"
   },

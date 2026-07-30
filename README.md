@@ -15,8 +15,8 @@ Coolify-ready health endpoint.
 
 ## Payment alerts
 
-Every alert title includes an unmistakable `[PRODUCTION]` or `[SANDBOX]` label.
-Sandbox titles use the `🧪` icon and the details explicitly say
+Production alerts omit a redundant environment label. Sandbox titles keep an
+unmistakable `[SANDBOX]` label, use the `🧪` icon, and explicitly say
 `test only; no real charge`. Transaction alerts also state the action and Apple
 product type, so a first purchase, subscription renewal, one-time purchase, and
 refund are visibly different.
@@ -34,6 +34,13 @@ Messages have specific titles for important events, including:
 The stored record also keeps useful verified fields such as product ID,
 transaction IDs, environment, price, currency, purchase date, expiry date, and
 renewal date.
+
+For non-USD purchases, the amount shows a daily USD estimate first and Apple's
+verified original amount second, for example `$5.12 (¥800)`. The service stores
+the complete USD-based ISO currency table in SQLite and refreshes it daily from
+[ExchangeRate-API](https://www.exchangerate-api.com). Payment webhooks never
+wait on that provider: if a refresh fails, the previous stored rates remain in
+use; if no rate exists, the original amount is still delivered.
 
 ## Customer-review alerts
 
@@ -401,6 +408,20 @@ node dist/scripts/deliver.js --limit 100
 Run it every minute from cron or a Coolify Scheduled Task. Multiple attempts are
 safe: each row is claimed atomically and delivered rows are not sent again.
 
+Refresh and persist the complete currency-rate table:
+
+```bash
+# Local source checkout
+npm run rates:dev
+
+# Built application or production container
+node dist/scripts/rates.js
+```
+
+Run it once after deployment and then daily. The open rate endpoint updates
+once per day and permits cached use with attribution. Conversion is an
+informational daily estimate, not an Apple proceeds, tax, or settlement value.
+
 ## Docker Compose
 
 ```bash
@@ -460,9 +481,17 @@ The named volume is mounted at `/data`, matching the default container
    node dist/scripts/reviews.js
    ```
 
-10. Configure the resulting HTTPS webhook URL in every app in App Store
+10. Add a daily Scheduled Task with cron expression `17 3 * * *` and command:
+
+    ```bash
+    node dist/scripts/rates.js
+    ```
+
+    Run this task once immediately after the first deployment to prime the
+    persistent rate cache.
+11. Configure the resulting HTTPS webhook URL in every app in App Store
     Connect.
-11. Run the Telegram configuration command in the deployed container:
+12. Run the Telegram configuration command in the deployed container:
 
     ```bash
     node dist/scripts/configure-telegram.js \
@@ -488,6 +517,9 @@ queue.
 - Duplicate Apple deliveries are idempotent by `notificationUUID`.
 - Customer reviews are authenticated with a short-lived, P-256-signed App Store
   Connect JWT and deduplicated by Apple's review resource ID.
+- Currency rates are accepted only from a fixed HTTPS origin, schema-validated,
+  required to contain at least 100 currencies and `USD=1`, then atomically
+  replaced in SQLite. A failed refresh cannot erase the last valid table.
 - Telegram HTML is escaped, and the bot token is never logged.
 - Registry and review messages use a durable SQLite outbox and the same retry
   worker as payment notifications.
@@ -518,7 +550,8 @@ npm audit --omit=dev
 Tests cover certificate fingerprints, fake-signature rejection, routing hints,
 database migrations and app state, payment and review deduplication, App Store
 Connect JWT signing and response validation, delivery queue transitions,
-message escaping, price formatting, and body-size enforcement.
+message escaping, persistent exchange-rate validation, USD conversion, price
+formatting, and body-size enforcement.
 
 ## Operational notes
 
@@ -526,6 +559,8 @@ message escaping, price formatting, and body-size enforcement.
   already delivered to Telegram.
 - A Telegram outage does not make Apple resend accepted events; the local retry
   worker handles them.
+- USD conversions use the last successfully stored daily reference rate and
+  can differ from card charges, taxes, Apple proceeds, and settlement amounts.
 - A `404` usually means the app has not been registered or is disabled.
 - A `401` means JWS, certificate, app identity, or environment verification
   failed.

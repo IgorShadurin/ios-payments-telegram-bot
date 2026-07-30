@@ -1,4 +1,5 @@
-import type { PaymentEvent, RegisteredApp } from "./types";
+import { EXCHANGE_RATE_PROVIDER_URL } from "./exchange-rates";
+import type { ExchangeRate, PaymentEvent, RegisteredApp } from "./types";
 
 export function escapeTelegramHtml(value: string): string {
   return value
@@ -56,7 +57,7 @@ function formatDate(timestamp: number): string {
   }).format(new Date(timestamp))} UTC`;
 }
 
-function formatPrice(price: number, currency?: string): string {
+function formatOriginalPrice(price: number, currency?: string): string {
   const amount = price / 1000;
   if (!currency) {
     return amount.toFixed(3);
@@ -72,9 +73,45 @@ function formatPrice(price: number, currency?: string): string {
   }
 }
 
+function formatUsd(amount: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatAmount(
+  price: number,
+  currency: string | undefined,
+  exchangeRate: ExchangeRate | undefined,
+  isTest: boolean,
+): { value: string; converted: boolean } {
+  const original = formatOriginalPrice(price, currency);
+  const testLabel = isTest ? "; test price" : "";
+  if (
+    !currency ||
+    currency.toUpperCase() === "USD" ||
+    !exchangeRate ||
+    exchangeRate.currencyCode !== currency.toUpperCase()
+  ) {
+    return {
+      value: `${original}${isTest ? " (test price)" : ""}`,
+      converted: false,
+    };
+  }
+  const originalAmount = price / 1000;
+  const usdAmount = originalAmount / exchangeRate.unitsPerUsd;
+  return {
+    value: `${formatUsd(usdAmount)} (${original}${testLabel})`,
+    converted: true,
+  };
+}
+
 function environmentLabel(environment: string): {
   titleTag?: string;
-  detail: string;
+  detail?: string;
   isTest: boolean;
 } {
   if (environment.toLowerCase() === "sandbox") {
@@ -86,8 +123,6 @@ function environmentLabel(environment: string): {
   }
   if (environment.toLowerCase() === "production") {
     return {
-      titleTag: "PRODUCTION",
-      detail: "Production (live App Store data)",
       isTest: false,
     };
   }
@@ -187,20 +222,28 @@ function line(
 export function formatTelegramMessage(
   app: RegisteredApp,
   event: PaymentEvent,
+  exchangeRate?: ExchangeRate,
 ): string {
   const environment = environmentLabel(event.environment);
+  const amount =
+    event.price !== undefined
+      ? formatAmount(
+          event.price,
+          event.currency,
+          exchangeRate,
+          environment.isTest,
+        )
+      : undefined;
   const details = [
     line("App", `${app.name} (${app.bundleId})`),
     line("Action", actionLabel(event)),
     line("Payment type", paymentTypeLabel(event)),
     line("Product", event.productId),
-    event.price !== undefined
-      ? line(
-          "Amount",
-          `${formatPrice(event.price, event.currency)}${
-            environment.isTest ? " (test price)" : ""
-          }`,
-        )
+    amount ? line("Amount", amount.value) : undefined,
+    amount?.converted && exchangeRate
+      ? `<b>FX rate:</b> <a href="${EXCHANGE_RATE_PROVIDER_URL}">ExchangeRate-API</a> (${escapeTelegramHtml(
+          formatDate(exchangeRate.sourceUpdatedAt),
+        )})`
       : undefined,
     line("Environment", environment.detail),
     line(

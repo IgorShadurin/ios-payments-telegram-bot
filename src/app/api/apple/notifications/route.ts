@@ -30,7 +30,13 @@ export async function POST(request: Request) {
     const stored = database.insertNotification({
       appId: verified.app.id,
       event: verified.event,
-      messageHtml: formatTelegramMessage(verified.app, verified.event),
+      messageHtml: formatTelegramMessage(
+        verified.app,
+        verified.event,
+        verified.event.currency
+          ? database.getExchangeRate(verified.event.currency)
+          : undefined,
+      ),
     });
 
     after(async () => {

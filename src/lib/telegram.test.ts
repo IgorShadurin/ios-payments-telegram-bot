@@ -63,12 +63,12 @@ describe("sendTelegramMessage", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await sendTelegramMessage("<b>Commands</b>", {
-      chatId: "580489664",
+      chatId: "100000001",
       replyToMessageId: 7,
     });
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body).toMatchObject({
-      chat_id: "580489664",
+      chat_id: "100000001",
       reply_parameters: {
         message_id: 7,
         allow_sending_without_reply: true,

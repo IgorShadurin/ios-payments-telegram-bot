@@ -12,9 +12,9 @@ afterEach(() => {
 describe("Telegram bot setup", () => {
   it("sets a secret webhook and commands only for approved chats", async () => {
     process.env.TELEGRAM_BOT_TOKEN = `1:${"x".repeat(24)}`;
-    process.env.TELEGRAM_CHAT_ID = "580489664";
+    process.env.TELEGRAM_CHAT_ID = "100000001";
     process.env.TELEGRAM_WEBHOOK_SECRET = "a".repeat(64);
-    process.env.TELEGRAM_ALLOWED_USER_IDS = "580489664,123456789";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "100000001,100000002";
     const webhookUrl = "https://example.test/api/telegram/webhook";
     const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal(
@@ -57,8 +57,8 @@ describe("Telegram bot setup", () => {
     );
     expect(commandCalls).toHaveLength(2);
     expect(commandCalls.map((call) => call.body.scope)).toEqual([
-      { type: "chat", chat_id: 580489664 },
-      { type: "chat", chat_id: 123456789 },
+      { type: "chat", chat_id: 100000001 },
+      { type: "chat", chat_id: 100000002 },
     ]);
   });
 });

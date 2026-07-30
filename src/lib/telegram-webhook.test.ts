@@ -9,7 +9,7 @@ const secret = "a".repeat(64);
 
 beforeEach(() => {
   process.env.TELEGRAM_WEBHOOK_SECRET = secret;
-  process.env.TELEGRAM_ALLOWED_USER_IDS = "580489664,123456789";
+  process.env.TELEGRAM_ALLOWED_USER_IDS = "100000001,100000002";
 });
 
 afterEach(() => {
@@ -40,8 +40,8 @@ describe("Telegram webhook security", () => {
   it("approves allowlisted users only in their private chat", () => {
     expect(
       isApprovedPrivateMessage({
-        from: { id: 580489664 },
-        chat: { id: 580489664, type: "private" },
+        from: { id: 100000001 },
+        chat: { id: 100000001, type: "private" },
       }),
     ).toBe(true);
     expect(
@@ -52,14 +52,14 @@ describe("Telegram webhook security", () => {
     ).toBe(false);
     expect(
       isApprovedPrivateMessage({
-        from: { id: 580489664 },
+        from: { id: 100000001 },
         chat: { id: -100123, type: "supergroup" },
       }),
     ).toBe(false);
     expect(
       isApprovedPrivateMessage({
-        from: { id: 580489664, is_bot: true },
-        chat: { id: 580489664, type: "private" },
+        from: { id: 100000001, is_bot: true },
+        chat: { id: 100000001, type: "private" },
       }),
     ).toBe(false);
   });
@@ -70,8 +70,8 @@ describe("Telegram webhook security", () => {
         update_id: 1,
         message: {
           message_id: 2,
-          from: { id: 580489664, is_bot: false },
-          chat: { id: 580489664, type: "private" },
+          from: { id: 100000001, is_bot: false },
+          chat: { id: 100000001, type: "private" },
           text: "/apps",
         },
       }).message?.text,

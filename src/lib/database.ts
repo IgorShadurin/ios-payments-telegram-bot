@@ -5,6 +5,7 @@ import { getDatabasePath } from "./config";
 import type {
   CustomerReviewBatchResult,
   CustomerReviewWithMessage,
+  ExchangeRate,
   NewNotification,
   RegisteredApp,
   StoredCustomerReview,
@@ -76,6 +77,15 @@ interface CustomerReviewRow {
 interface CustomerReviewWithAppRow extends CustomerReviewRow {
   app_name: string;
   bundle_id: string;
+}
+
+interface ExchangeRateRow {
+  currency_code: string;
+  units_per_usd: number;
+  source_updated_at: number;
+  next_update_at: number;
+  fetched_at: number;
+  provider: string;
 }
 
 function mapApp(row: AppRow): RegisteredApp {
@@ -157,6 +167,17 @@ function mapCustomerReviewWithApp(
   };
 }
 
+function mapExchangeRate(row: ExchangeRateRow): ExchangeRate {
+  return {
+    currencyCode: row.currency_code,
+    unitsPerUsd: row.units_per_usd,
+    sourceUpdatedAt: row.source_updated_at,
+    nextUpdateAt: row.next_update_at,
+    fetchedAt: row.fetched_at,
+    provider: row.provider,
+  };
+}
+
 export class AppDatabase {
   private readonly database: Database.Database;
 
@@ -174,7 +195,7 @@ export class AppDatabase {
       simple: true,
     }) as number;
 
-    if (version > 3) {
+    if (version > 4) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -283,6 +304,25 @@ export class AppDatabase {
           );
 
           PRAGMA user_version = 3;
+        `);
+      })();
+      version = 3;
+    }
+
+    if (version === 3) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE exchange_rates (
+            currency_code TEXT PRIMARY KEY
+              CHECK (length(currency_code) = 3),
+            units_per_usd REAL NOT NULL CHECK (units_per_usd > 0),
+            source_updated_at INTEGER NOT NULL,
+            next_update_at INTEGER NOT NULL,
+            fetched_at INTEGER NOT NULL,
+            provider TEXT NOT NULL
+          );
+
+          PRAGMA user_version = 4;
         `);
       })();
     }
@@ -634,6 +674,52 @@ export class AppDatabase {
       )
       .all(limit) as CustomerReviewWithAppRow[];
     return rows.map(mapCustomerReviewWithApp);
+  }
+
+  replaceExchangeRates(
+    rates: Readonly<Record<string, number>>,
+    metadata: {
+      sourceUpdatedAt: number;
+      nextUpdateAt: number;
+      provider: string;
+    },
+  ): number {
+    return this.database.transaction(() => {
+      const fetchedAt = Date.now();
+      this.database.prepare("DELETE FROM exchange_rates").run();
+      const insert = this.database.prepare(
+        `INSERT INTO exchange_rates (
+          currency_code, units_per_usd, source_updated_at, next_update_at,
+          fetched_at, provider
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      let stored = 0;
+      for (const [currencyCode, unitsPerUsd] of Object.entries(rates)) {
+        stored += insert.run(
+          currencyCode,
+          unitsPerUsd,
+          metadata.sourceUpdatedAt,
+          metadata.nextUpdateAt,
+          fetchedAt,
+          metadata.provider,
+        ).changes;
+      }
+      return stored;
+    })();
+  }
+
+  getExchangeRate(currencyCode: string): ExchangeRate | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM exchange_rates WHERE currency_code = ?")
+      .get(currencyCode.toUpperCase()) as ExchangeRateRow | undefined;
+    return row ? mapExchangeRate(row) : undefined;
+  }
+
+  exchangeRateCount(): number {
+    const row = this.database
+      .prepare("SELECT COUNT(*) AS count FROM exchange_rates")
+      .get() as { count: number };
+    return row.count;
   }
 
   insertNotification(input: NewNotification): {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { escapeTelegramHtml, formatTelegramMessage } from "./message";
-import type { PaymentEvent, RegisteredApp } from "./types";
+import type { ExchangeRate, PaymentEvent, RegisteredApp } from "./types";
 
 const app: RegisteredApp = {
   id: 1,
@@ -10,6 +10,15 @@ const app: RegisteredApp = {
   enabled: true,
   createdAt: 0,
   updatedAt: 0,
+};
+
+const jpyRate: ExchangeRate = {
+  currencyCode: "JPY",
+  unitsPerUsd: 156.25,
+  sourceUpdatedAt: 1_750_000_000_000,
+  nextUpdateAt: 1_750_086_400_000,
+  fetchedAt: 1_750_000_100_000,
+  provider: "ExchangeRate-API",
 };
 
 function makeEvent(overrides: Partial<PaymentEvent> = {}): PaymentEvent {
@@ -32,12 +41,31 @@ function makeEvent(overrides: Partial<PaymentEvent> = {}): PaymentEvent {
 describe("Telegram message formatting", () => {
   it("formats renewal details and Apple's milliunit price", () => {
     const message = formatTelegramMessage(app, makeEvent());
-    expect(message).toContain("✅ [PRODUCTION] Subscription renewed");
+    expect(message).toContain("✅ Subscription renewed");
+    expect(message).not.toContain("PRODUCTION");
+    expect(message).not.toContain("<b>Environment:</b>");
     expect(message).toContain("Renewal of an existing subscription");
     expect(message).toContain("Auto-renewable subscription");
     expect(message).toContain("$4.99");
     expect(message).toContain("premium.monthly");
     expect(message).toContain("Yum &amp; Cut");
+  });
+
+  it("puts the USD conversion before the original non-USD price", () => {
+    const message = formatTelegramMessage(
+      app,
+      makeEvent({
+        notificationType: "ONE_TIME_CHARGE",
+        price: 800_000,
+        currency: "JPY",
+      }),
+      jpyRate,
+    );
+
+    expect(message).toContain("<b>Amount:</b> $5.12 (¥800)");
+    expect(message).toContain(
+      '<b>FX rate:</b> <a href="https://www.exchangerate-api.com">ExchangeRate-API</a>',
+    );
   });
 
   it("makes sandbox transactions unmistakably test-only", () => {
