@@ -58,14 +58,16 @@ async function deliverRegistryNotification(
   if (!mutation.outboxMessageId) {
     return;
   }
-  const delivered = await deliverTelegramOutboxMessageNow(
+  const outcome = await deliverTelegramOutboxMessageNow(
     database,
     mutation.outboxMessageId,
   );
   console.log(
-    delivered
+    outcome === "delivered"
       ? "Telegram notification delivered."
-      : "Telegram notification queued for retry.",
+      : outcome === "suppressed"
+        ? "Telegram notification suppressed by policy."
+        : "Telegram notification queued for retry.",
   );
 }
 

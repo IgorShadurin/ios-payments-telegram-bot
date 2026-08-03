@@ -117,6 +117,11 @@ IOS_PAYMENTS_ADMIN_API_KEY=replace-with-a-random-64-character-hex-key
 DATABASE_PATH=./data/ios-payments.sqlite
 APPLE_ENABLE_ONLINE_CHECKS=true
 
+# Optional: send only successful production subscriptions and customer reviews.
+TELEGRAM_PAYMENT_NOTIFICATION_TYPES=SUBSCRIBED,DID_RENEW
+TELEGRAM_PAYMENT_ENVIRONMENTS=Production
+TELEGRAM_OUTBOX_CATEGORIES=app_review
+
 # Optional review polling:
 APP_STORE_CONNECT_KEY_TYPE=team
 APP_STORE_CONNECT_ISSUER_ID=00000000-0000-0000-0000-000000000000
@@ -134,6 +139,21 @@ the resulting `message.chat.id`. If the destination is a forum topic, also set
 IDs. Commands work only when an allowlisted user sends them in that user's
 private chat with the bot. The bot returns no message for other users, bots,
 groups, supergroups, or channels.
+
+The three optional notification allowlists control what is delivered:
+
+- `TELEGRAM_PAYMENT_NOTIFICATION_TYPES` contains Apple V2 notification types.
+  `SUBSCRIBED,DID_RENEW` means successful initial subscriptions,
+  resubscriptions, renewals, and billing recoveries.
+- `TELEGRAM_PAYMENT_ENVIRONMENTS=Production` suppresses every sandbox event.
+- `TELEGRAM_OUTBOX_CATEGORIES=app_review` allows customer-review alerts while
+  suppressing automatic app-registry change alerts.
+
+Omit an allowlist to permit every value in that dimension. Disallowed Apple
+events are still signature-verified, stored, and deduplicated in SQLite, but
+are marked handled without contacting Telegram. The delivery worker applies
+the current policy to existing queued messages too, so enabling a filter does
+not release an old sandbox or failure backlog.
 
 Generate the webhook secret independently:
 
@@ -450,6 +470,7 @@ The named volume is mounted at `/data`, matching the default container
 3. Add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
    `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_WEBHOOK_SECRET`,
    `IOS_PAYMENTS_ADMIN_API_KEY`, optional `TELEGRAM_MESSAGE_THREAD_ID`,
+   optional notification allowlists described above,
    `DATABASE_PATH=/data/ios-payments.sqlite`, and
    `APPLE_ENABLE_ONLINE_CHECKS=true`. To enable review alerts, also add the
    `APP_STORE_CONNECT_*` secrets described above.

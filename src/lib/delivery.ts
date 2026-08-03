@@ -1,6 +1,12 @@
 import type { AppDatabase } from "./database";
+import {
+  shouldSendOutboxNotification,
+  shouldSendPaymentNotification,
+} from "./notification-policy";
 import { sendTelegramMessage, TelegramDeliveryError } from "./telegram";
 import type { StoredNotification, StoredTelegramOutboxMessage } from "./types";
+
+export type TelegramDeliveryOutcome = "delivered" | "suppressed" | "failed";
 
 function retryDelayMs(attempts: number): number {
   const scheduleMinutes = [1, 5, 15, 60, 360, 720, 1_440];
@@ -11,11 +17,15 @@ function retryDelayMs(attempts: number): number {
 async function deliverClaimed(
   database: AppDatabase,
   notification: StoredNotification,
-): Promise<boolean> {
+): Promise<TelegramDeliveryOutcome> {
+  if (!shouldSendPaymentNotification(notification)) {
+    database.markNotificationSuppressed(notification.id);
+    return "suppressed";
+  }
   try {
     const messageId = await sendTelegramMessage(notification.messageHtml);
     database.markDelivered(notification.id, messageId);
-    return true;
+    return "delivered";
   } catch (error) {
     const retryAfterMs =
       error instanceof TelegramDeliveryError && error.retryAfterSeconds
@@ -24,18 +34,22 @@ async function deliverClaimed(
     const message =
       error instanceof Error ? error.message : "Unknown Telegram error";
     database.markForRetry(notification.id, message, Date.now() + retryAfterMs);
-    return false;
+    return "failed";
   }
 }
 
 async function deliverClaimedOutboxMessage(
   database: AppDatabase,
   message: StoredTelegramOutboxMessage,
-): Promise<boolean> {
+): Promise<TelegramDeliveryOutcome> {
+  if (!shouldSendOutboxNotification(message.category)) {
+    database.markTelegramOutboxSuppressed(message.id);
+    return "suppressed";
+  }
   try {
     const messageId = await sendTelegramMessage(message.messageHtml);
     database.markTelegramOutboxDelivered(message.id, messageId);
-    return true;
+    return "delivered";
   } catch (error) {
     const retryAfterMs =
       error instanceof TelegramDeliveryError && error.retryAfterSeconds
@@ -48,17 +62,17 @@ async function deliverClaimedOutboxMessage(
       errorMessage,
       Date.now() + retryAfterMs,
     );
-    return false;
+    return "failed";
   }
 }
 
 export async function deliverNotificationNow(
   database: AppDatabase,
   id: number,
-): Promise<boolean> {
+): Promise<TelegramDeliveryOutcome | undefined> {
   const claimed = database.claimNotification(id);
   if (!claimed) {
-    return false;
+    return undefined;
   }
   return deliverClaimed(database, claimed);
 }
@@ -66,10 +80,10 @@ export async function deliverNotificationNow(
 export async function deliverTelegramOutboxMessageNow(
   database: AppDatabase,
   id: number,
-): Promise<boolean> {
+): Promise<TelegramDeliveryOutcome | undefined> {
   const claimed = database.claimTelegramOutboxMessage(id);
   if (!claimed) {
-    return false;
+    return undefined;
   }
   return deliverClaimedOutboxMessage(database, claimed);
 }
@@ -77,26 +91,39 @@ export async function deliverTelegramOutboxMessageNow(
 export async function deliverDueNotifications(
   database: AppDatabase,
   limit: number,
-): Promise<{ claimed: number; delivered: number; failed: number }> {
+): Promise<{
+  claimed: number;
+  delivered: number;
+  suppressed: number;
+  failed: number;
+}> {
   const outboxMessages = database.claimDueTelegramOutboxMessages(limit);
   const notifications = database.claimDueNotifications(
     Math.max(0, limit - outboxMessages.length),
   );
   let delivered = 0;
+  let suppressed = 0;
   for (const message of outboxMessages) {
-    if (await deliverClaimedOutboxMessage(database, message)) {
+    const outcome = await deliverClaimedOutboxMessage(database, message);
+    if (outcome === "delivered") {
       delivered += 1;
+    } else if (outcome === "suppressed") {
+      suppressed += 1;
     }
   }
   for (const notification of notifications) {
-    if (await deliverClaimed(database, notification)) {
+    const outcome = await deliverClaimed(database, notification);
+    if (outcome === "delivered") {
       delivered += 1;
+    } else if (outcome === "suppressed") {
+      suppressed += 1;
     }
   }
   const claimed = outboxMessages.length + notifications.length;
   return {
     claimed,
     delivered,
-    failed: claimed - delivered,
+    suppressed,
+    failed: claimed - delivered - suppressed,
   };
 }

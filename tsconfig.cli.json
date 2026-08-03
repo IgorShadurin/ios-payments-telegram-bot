@@ -17,6 +17,7 @@
     "src/lib/delivery.ts",
     "src/lib/exchange-rates.ts",
     "src/lib/message.ts",
+    "src/lib/notification-policy.ts",
     "src/lib/reviews.ts",
     "src/lib/telegram.ts",
     "src/lib/types.ts"

@@ -538,6 +538,18 @@ export class AppDatabase {
       .run(telegramMessageId, Date.now(), id);
   }
 
+  markTelegramOutboxSuppressed(id: number): void {
+    this.database
+      .prepare(
+        `UPDATE telegram_outbox_messages
+         SET delivery_status = 'delivered',
+             locked_at = NULL,
+             last_error = NULL
+         WHERE id = ? AND delivery_status = 'sending'`,
+      )
+      .run(id);
+  }
+
   markTelegramOutboxForRetry(
     id: number,
     error: string,
@@ -845,6 +857,18 @@ export class AppDatabase {
          WHERE id = ? AND delivery_status = 'sending'`,
       )
       .run(telegramMessageId, Date.now(), id);
+  }
+
+  markNotificationSuppressed(id: number): void {
+    this.database
+      .prepare(
+        `UPDATE notifications
+         SET delivery_status = 'delivered',
+             locked_at = NULL,
+             last_error = NULL
+         WHERE id = ? AND delivery_status = 'sending'`,
+      )
+      .run(id);
   }
 
   markForRetry(id: number, error: string, nextAttemptAt: number): void {
