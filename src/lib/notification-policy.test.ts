@@ -42,10 +42,10 @@ describe("Telegram notification policy", () => {
     expect(shouldSendOutboxNotification("app_registry")).toBe(true);
   });
 
-  it("allows only successful production subscriptions and reviews", () => {
+  it("allows successful production subscriptions, reviews, and registry events", () => {
     process.env.TELEGRAM_PAYMENT_NOTIFICATION_TYPES = "SUBSCRIBED,DID_RENEW";
     process.env.TELEGRAM_PAYMENT_ENVIRONMENTS = "Production";
-    process.env.TELEGRAM_OUTBOX_CATEGORIES = "app_review";
+    process.env.TELEGRAM_OUTBOX_CATEGORIES = "app_review,app_registry";
 
     expect(
       shouldSendPaymentNotification({
@@ -72,7 +72,8 @@ describe("Telegram notification policy", () => {
       }),
     ).toBe(false);
     expect(shouldSendOutboxNotification("app_review")).toBe(true);
-    expect(shouldSendOutboxNotification("app_registry")).toBe(false);
+    expect(shouldSendOutboxNotification("app_registry")).toBe(true);
+    expect(shouldSendOutboxNotification("other_event")).toBe(false);
   });
 
   it("rejects malformed allowlists instead of silently widening them", () => {

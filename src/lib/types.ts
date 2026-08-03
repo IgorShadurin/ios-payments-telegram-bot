@@ -37,7 +37,12 @@ export interface PaymentEvent {
   payload: Record<string, unknown>;
 }
 
-export type DeliveryStatus = "pending" | "sending" | "retry" | "delivered";
+export type DeliveryStatus =
+  | "pending"
+  | "sending"
+  | "retry"
+  | "delivered"
+  | "suppressed";
 
 export interface StoredNotification {
   id: number;
@@ -60,6 +65,7 @@ export interface StoredNotification {
   telegramMessageId?: number;
   receivedAt: number;
   deliveredAt?: number;
+  suppressedAt?: number;
 }
 
 export interface NewNotification {
@@ -80,6 +86,7 @@ export interface StoredTelegramOutboxMessage {
   telegramMessageId?: number;
   createdAt: number;
   deliveredAt?: number;
+  suppressedAt?: number;
 }
 
 export interface CustomerReview {

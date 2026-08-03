@@ -33,7 +33,7 @@ beforeEach(() => {
   database = new AppDatabase(path.join(directory, "test.sqlite"));
   process.env.TELEGRAM_PAYMENT_NOTIFICATION_TYPES = "SUBSCRIBED,DID_RENEW";
   process.env.TELEGRAM_PAYMENT_ENVIRONMENTS = "Production";
-  process.env.TELEGRAM_OUTBOX_CATEGORIES = "app_review";
+  process.env.TELEGRAM_OUTBOX_CATEGORIES = "app_review,app_registry";
 });
 
 afterEach(() => {
@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe("filtered Telegram delivery", () => {
-  it("suppresses queued sandbox, failed, and registry messages", async () => {
+  it("stores queued sandbox and failed messages as suppressed", async () => {
     const app = database.addApp("Example", "com.example.app", 123456789);
     const sandbox = database.insertNotification({
       appId: app.id,
@@ -66,10 +66,10 @@ describe("filtered Telegram delivery", () => {
       event: event("failed-event", "DID_FAIL_TO_RENEW", "Production"),
       messageHtml: "failed",
     }).notification;
-    const registry = database.enqueueTelegramMessage(
-      "registry-event",
-      "app_registry",
-      "registry",
+    const other = database.enqueueTelegramMessage(
+      "other-event",
+      "other_event",
+      "other",
     ).message;
 
     await expect(deliverDueNotifications(database, 10)).resolves.toEqual({
@@ -79,19 +79,22 @@ describe("filtered Telegram delivery", () => {
       failed: 0,
     });
     expect(database.getNotificationById(sandbox.id)).toMatchObject({
-      deliveryStatus: "delivered",
+      deliveryStatus: "suppressed",
       deliveryAttempts: 0,
       telegramMessageId: undefined,
+      suppressedAt: expect.any(Number),
     });
     expect(database.getNotificationById(failed.id)).toMatchObject({
-      deliveryStatus: "delivered",
+      deliveryStatus: "suppressed",
       deliveryAttempts: 0,
       telegramMessageId: undefined,
+      suppressedAt: expect.any(Number),
     });
-    expect(database.getTelegramOutboxMessageById(registry.id)).toMatchObject({
-      deliveryStatus: "delivered",
+    expect(database.getTelegramOutboxMessageById(other.id)).toMatchObject({
+      deliveryStatus: "suppressed",
       deliveryAttempts: 0,
       telegramMessageId: undefined,
+      suppressedAt: expect.any(Number),
     });
     expect(database.pendingCount()).toBe(0);
     expect(database.pendingTelegramOutboxCount()).toBe(0);

@@ -117,10 +117,11 @@ IOS_PAYMENTS_ADMIN_API_KEY=replace-with-a-random-64-character-hex-key
 DATABASE_PATH=./data/ios-payments.sqlite
 APPLE_ENABLE_ONLINE_CHECKS=true
 
-# Optional: send only successful production subscriptions and customer reviews.
+# Optional: send successful production subscriptions, customer reviews, and
+# app registration/update/removal events.
 TELEGRAM_PAYMENT_NOTIFICATION_TYPES=SUBSCRIBED,DID_RENEW
 TELEGRAM_PAYMENT_ENVIRONMENTS=Production
-TELEGRAM_OUTBOX_CATEGORIES=app_review
+TELEGRAM_OUTBOX_CATEGORIES=app_review,app_registry
 
 # Optional review polling:
 APP_STORE_CONNECT_KEY_TYPE=team
@@ -146,14 +147,15 @@ The three optional notification allowlists control what is delivered:
   `SUBSCRIBED,DID_RENEW` means successful initial subscriptions,
   resubscriptions, renewals, and billing recoveries.
 - `TELEGRAM_PAYMENT_ENVIRONMENTS=Production` suppresses every sandbox event.
-- `TELEGRAM_OUTBOX_CATEGORIES=app_review` allows customer-review alerts while
-  suppressing automatic app-registry change alerts.
+- `TELEGRAM_OUTBOX_CATEGORIES=app_review,app_registry` allows customer-review
+  alerts and app registration, update, and removal alerts.
 
 Omit an allowlist to permit every value in that dimension. Disallowed Apple
-events are still signature-verified, stored, and deduplicated in SQLite, but
-are marked handled without contacting Telegram. The delivery worker applies
-the current policy to existing queued messages too, so enabling a filter does
-not release an old sandbox or failure backlog.
+events are still signature-verified, stored, and deduplicated in SQLite. Their
+full sanitized payload and event metadata remain available, while delivery is
+recorded accurately as `suppressed` with a timestamp instead of `delivered`.
+The delivery worker applies the current policy to existing queued messages too,
+so enabling a filter does not release an old sandbox or failure backlog.
 
 Generate the webhook secret independently:
 

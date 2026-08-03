@@ -45,6 +45,7 @@ interface NotificationRow {
   telegram_message_id: number | null;
   received_at: number;
   delivered_at: number | null;
+  suppressed_at: number | null;
 }
 
 interface TelegramOutboxRow {
@@ -60,6 +61,7 @@ interface TelegramOutboxRow {
   telegram_message_id: number | null;
   created_at: number;
   delivered_at: number | null;
+  suppressed_at: number | null;
 }
 
 interface CustomerReviewRow {
@@ -122,6 +124,7 @@ function mapNotification(row: NotificationRow): StoredNotification {
     telegramMessageId: row.telegram_message_id ?? undefined,
     receivedAt: row.received_at,
     deliveredAt: row.delivered_at ?? undefined,
+    suppressedAt: row.suppressed_at ?? undefined,
   };
 }
 
@@ -140,6 +143,7 @@ function mapTelegramOutboxMessage(
     telegramMessageId: row.telegram_message_id ?? undefined,
     createdAt: row.created_at,
     deliveredAt: row.delivered_at ?? undefined,
+    suppressedAt: row.suppressed_at ?? undefined,
   };
 }
 
@@ -195,7 +199,7 @@ export class AppDatabase {
       simple: true,
     }) as number;
 
-    if (version > 4) {
+    if (version > 5) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -323,6 +327,141 @@ export class AppDatabase {
           );
 
           PRAGMA user_version = 4;
+        `);
+      })();
+      version = 4;
+    }
+
+    if (version === 4) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          DROP INDEX notifications_due_idx;
+          DROP INDEX notifications_app_idx;
+          DROP INDEX notifications_transaction_idx;
+          ALTER TABLE notifications RENAME TO notifications_v4;
+
+          CREATE TABLE notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            notification_uuid TEXT NOT NULL UNIQUE,
+            app_id INTEGER REFERENCES apps(id) ON DELETE RESTRICT,
+            notification_type TEXT NOT NULL,
+            subtype TEXT,
+            environment TEXT NOT NULL,
+            signed_date INTEGER NOT NULL,
+            transaction_id TEXT,
+            original_transaction_id TEXT,
+            product_id TEXT,
+            message_html TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            delivery_status TEXT NOT NULL DEFAULT 'pending'
+              CHECK (delivery_status IN (
+                'pending', 'sending', 'retry', 'delivered', 'suppressed'
+              )),
+            delivery_attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL,
+            locked_at INTEGER,
+            last_error TEXT,
+            telegram_message_id INTEGER,
+            received_at INTEGER NOT NULL,
+            delivered_at INTEGER,
+            suppressed_at INTEGER
+          );
+
+          INSERT INTO notifications (
+            id, notification_uuid, app_id, notification_type, subtype,
+            environment, signed_date, transaction_id,
+            original_transaction_id, product_id, message_html, payload_json,
+            delivery_status, delivery_attempts, next_attempt_at, locked_at,
+            last_error, telegram_message_id, received_at, delivered_at,
+            suppressed_at
+          )
+          SELECT
+            id, notification_uuid, app_id, notification_type, subtype,
+            environment, signed_date, transaction_id,
+            original_transaction_id, product_id, message_html, payload_json,
+            CASE
+              WHEN delivery_status = 'delivered'
+                AND telegram_message_id IS NULL
+                AND delivery_attempts = 0
+                AND delivered_at IS NULL
+              THEN 'suppressed'
+              ELSE delivery_status
+            END,
+            delivery_attempts, next_attempt_at, locked_at, last_error,
+            telegram_message_id, received_at, delivered_at,
+            CASE
+              WHEN delivery_status = 'delivered'
+                AND telegram_message_id IS NULL
+                AND delivery_attempts = 0
+                AND delivered_at IS NULL
+              THEN received_at
+              ELSE NULL
+            END
+          FROM notifications_v4;
+
+          DROP TABLE notifications_v4;
+          CREATE INDEX notifications_due_idx
+            ON notifications(delivery_status, next_attempt_at);
+          CREATE INDEX notifications_app_idx
+            ON notifications(app_id, received_at DESC);
+          CREATE INDEX notifications_transaction_idx
+            ON notifications(transaction_id);
+
+          DROP INDEX telegram_outbox_due_idx;
+          ALTER TABLE telegram_outbox_messages
+            RENAME TO telegram_outbox_messages_v4;
+
+          CREATE TABLE telegram_outbox_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            deduplication_key TEXT NOT NULL UNIQUE,
+            category TEXT NOT NULL,
+            message_html TEXT NOT NULL,
+            delivery_status TEXT NOT NULL DEFAULT 'pending'
+              CHECK (delivery_status IN (
+                'pending', 'sending', 'retry', 'delivered', 'suppressed'
+              )),
+            delivery_attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL,
+            locked_at INTEGER,
+            last_error TEXT,
+            telegram_message_id INTEGER,
+            created_at INTEGER NOT NULL,
+            delivered_at INTEGER,
+            suppressed_at INTEGER
+          );
+
+          INSERT INTO telegram_outbox_messages (
+            id, deduplication_key, category, message_html, delivery_status,
+            delivery_attempts, next_attempt_at, locked_at, last_error,
+            telegram_message_id, created_at, delivered_at, suppressed_at
+          )
+          SELECT
+            id, deduplication_key, category, message_html,
+            CASE
+              WHEN delivery_status = 'delivered'
+                AND telegram_message_id IS NULL
+                AND delivery_attempts = 0
+                AND delivered_at IS NULL
+              THEN 'suppressed'
+              ELSE delivery_status
+            END,
+            delivery_attempts, next_attempt_at, locked_at, last_error,
+            telegram_message_id, created_at, delivered_at,
+            CASE
+              WHEN delivery_status = 'delivered'
+                AND telegram_message_id IS NULL
+                AND delivery_attempts = 0
+                AND delivered_at IS NULL
+              THEN created_at
+              ELSE NULL
+            END
+          FROM telegram_outbox_messages_v4;
+
+          DROP TABLE telegram_outbox_messages_v4;
+          CREATE INDEX telegram_outbox_due_idx
+            ON telegram_outbox_messages(delivery_status, next_attempt_at);
+
+          PRAGMA user_version = 5;
         `);
       })();
     }
@@ -542,12 +681,13 @@ export class AppDatabase {
     this.database
       .prepare(
         `UPDATE telegram_outbox_messages
-         SET delivery_status = 'delivered',
+         SET delivery_status = 'suppressed',
+             suppressed_at = ?,
              locked_at = NULL,
              last_error = NULL
          WHERE id = ? AND delivery_status = 'sending'`,
       )
-      .run(id);
+      .run(Date.now(), id);
   }
 
   markTelegramOutboxForRetry(
@@ -572,7 +712,7 @@ export class AppDatabase {
     const row = this.database
       .prepare(
         `SELECT COUNT(*) AS count FROM telegram_outbox_messages
-         WHERE delivery_status != 'delivered'`,
+         WHERE delivery_status IN ('pending', 'sending', 'retry')`,
       )
       .get() as { count: number };
     return row.count;
@@ -863,12 +1003,13 @@ export class AppDatabase {
     this.database
       .prepare(
         `UPDATE notifications
-         SET delivery_status = 'delivered',
+         SET delivery_status = 'suppressed',
+             suppressed_at = ?,
              locked_at = NULL,
              last_error = NULL
          WHERE id = ? AND delivery_status = 'sending'`,
       )
-      .run(id);
+      .run(Date.now(), id);
   }
 
   markForRetry(id: number, error: string, nextAttemptAt: number): void {
@@ -889,7 +1030,7 @@ export class AppDatabase {
     const row = this.database
       .prepare(
         `SELECT COUNT(*) AS count FROM notifications
-         WHERE delivery_status != 'delivered'`,
+         WHERE delivery_status IN ('pending', 'sending', 'retry')`,
       )
       .get() as { count: number };
     return row.count;
