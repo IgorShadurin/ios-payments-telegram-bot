@@ -6,6 +6,8 @@ import type { CustomerReview } from "./types";
 
 const APP_STORE_CONNECT_ORIGIN = "https://api.appstoreconnect.apple.com";
 const REVIEW_PAGE_LIMIT = 200;
+const RETRY_BACKOFF_MS = [5_000, 20_000] as const;
+const MAX_IN_CYCLE_RETRY_AFTER_MS = 30_000;
 
 const reviewAttributesSchema = z.object({
   rating: z.number().int().min(1).max(5),
@@ -37,6 +39,7 @@ const reviewPageSchema = z.object({
 export interface CustomerReviewPage {
   reviews: CustomerReview[];
   nextUrl?: string;
+  rateLimitRemaining?: number;
 }
 
 export class AppStoreConnectError extends Error {
@@ -56,21 +59,30 @@ function retryAfterMs(header: string | null): number | undefined {
   }
   const seconds = Number(header);
   if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.min(seconds * 1_000, 10_000);
+    return seconds * 1_000;
   }
   const date = Date.parse(header);
-  return Number.isFinite(date)
-    ? Math.min(Math.max(0, date - Date.now()), 10_000)
-    : undefined;
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
 }
 
-function isRetryable(error: unknown): error is AppStoreConnectError {
+export function isRetryableAppStoreConnectError(
+  error: unknown,
+): error is AppStoreConnectError {
   return (
     error instanceof AppStoreConnectError &&
     (error.status === undefined ||
       error.status === 429 ||
       (error.status >= 500 && error.status <= 599))
   );
+}
+
+function rateLimitRemaining(header: string | null): number | undefined {
+  const match = header?.match(/(?:^|;)\s*user-hour-rem:(\d+)\s*(?:;|$)/i);
+  if (!match) {
+    return undefined;
+  }
+  const remaining = Number(match[1]);
+  return Number.isSafeInteger(remaining) ? remaining : undefined;
 }
 
 function encodeJson(value: unknown): string {
@@ -209,6 +221,7 @@ async function fetchCustomerReviewPageOnce(
   const validatedNextUrl = parsed.data.links.next
     ? validateReviewUrl(parsed.data.links.next, appAppleId).toString()
     : undefined;
+  const remaining = rateLimitRemaining(response.headers.get("x-rate-limit"));
 
   return {
     reviews: parsed.data.data.map((review) => ({
@@ -216,6 +229,7 @@ async function fetchCustomerReviewPageOnce(
       ...review.attributes,
     })),
     nextUrl: validatedNextUrl,
+    ...(remaining === undefined ? {} : { rateLimitRemaining: remaining }),
   };
 }
 
@@ -241,10 +255,18 @@ export async function fetchCustomerReviewPage(
       );
     } catch (error) {
       lastError = error;
-      if (!isRetryable(error) || attempt === 2) {
+      if (!isRetryableAppStoreConnectError(error) || attempt === 2) {
         throw error;
       }
-      await wait(error.retryAfterMs ?? [500, 1_500][attempt]);
+      const fallbackDelayMs = RETRY_BACKOFF_MS[attempt];
+      const requestedDelayMs = Math.max(
+        fallbackDelayMs,
+        error.retryAfterMs ?? 0,
+      );
+      if (requestedDelayMs > MAX_IN_CYCLE_RETRY_AFTER_MS) {
+        throw error;
+      }
+      await wait(requestedDelayMs);
     }
   }
   throw lastError;

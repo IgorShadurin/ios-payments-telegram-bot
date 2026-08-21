@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AppStoreConnectError } from "./app-store-connect";
 import { AppDatabase } from "./database";
 import {
   formatCustomerReviewMessage,
@@ -68,6 +69,91 @@ describe("customer review polling", () => {
       category: "app_review",
       deliveryStatus: "pending",
     });
+  });
+
+  it("defers the cycle without failing after an exhausted rate limit", async () => {
+    database.addApp("Second", "com.example.second", 987654321);
+    const fetchPage = vi.fn(async () => {
+      throw new AppStoreConnectError(
+        "App Store Connect rejected the request with HTTP 429",
+        429,
+      );
+    });
+    const onError = vi.fn();
+
+    await expect(
+      pollCustomerReviews(database, fetchPage, onError),
+    ).resolves.toEqual({
+      apps: 2,
+      attemptedApps: 1,
+      baselineApps: 0,
+      stored: 0,
+      queued: 0,
+      failed: 0,
+      deferred: true,
+      deferredReason: "rate_limit",
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("defers temporary Apple server failures to the next cycle", async () => {
+    const fetchPage = vi.fn(async () => {
+      throw new AppStoreConnectError(
+        "App Store Connect rejected the request with HTTP 500",
+        500,
+      );
+    });
+
+    await expect(
+      pollCustomerReviews(database, fetchPage),
+    ).resolves.toMatchObject({
+      failed: 0,
+      deferred: true,
+      deferredReason: "temporary_unavailable",
+    });
+  });
+
+  it("stops before exhausting Apple's reported rate-limit headroom", async () => {
+    database.addApp("Second", "com.example.second", 987654321);
+    const fetchPage = vi.fn(async () => ({
+      reviews: [],
+      rateLimitRemaining: 10,
+    }));
+
+    await expect(
+      pollCustomerReviews(database, fetchPage),
+    ).resolves.toMatchObject({
+      apps: 2,
+      attemptedApps: 1,
+      baselineApps: 1,
+      failed: 0,
+      deferred: true,
+      deferredReason: "rate_limit_headroom",
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports one authentication failure and stops the cycle", async () => {
+    database.addApp("Second", "com.example.second", 987654321);
+    const fetchPage = vi.fn(async () => {
+      throw new AppStoreConnectError(
+        "App Store Connect rejected the request with HTTP 401",
+        401,
+      );
+    });
+    const onError = vi.fn();
+
+    await expect(
+      pollCustomerReviews(database, fetchPage, onError),
+    ).resolves.toMatchObject({
+      apps: 2,
+      attemptedApps: 1,
+      failed: 1,
+      deferred: false,
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 
   it("escapes review content before placing it in Telegram HTML", () => {

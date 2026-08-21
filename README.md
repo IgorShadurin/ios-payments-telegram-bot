@@ -403,13 +403,20 @@ For an individual API key, use
 `APP_STORE_CONNECT_ISSUER_ID`, and set that key's ID and private key. The
 individual user's role and per-app access determine which reviews it can read.
 
-The worker exits nonzero if any app fails, continues checking the other apps,
-and prints only the affected bundle ID and a sanitized error. It never prints
-the API token, private key, or review text. Run the existing delivery worker
-every minute to send queued review alerts and retry Telegram failures.
+The worker exits nonzero if an app has a permanent failure and prints only the
+affected bundle ID and a sanitized error. It never prints the API token,
+private key, or review text. Run the existing delivery worker every minute to
+send queued review alerts and retry Telegram failures.
+
 Temporary network errors, Apple HTTP `429` rate limits, and Apple `5xx`
-responses are retried up to three times. Authentication, permission, and
-unknown-app errors fail immediately so configuration problems remain visible.
+responses use increasing retry delays of 5 and 20 seconds, extended when Apple
+provides a reasonable `Retry-After` value. After the third unsuccessful request,
+the worker defers the rest of the poll to the next scheduled run and exits
+successfully, so a shared API-key rate limit does not create a burst across all
+registered apps or a false Coolify task-failure alert. It also watches Apple's
+`X-Rate-Limit` response header and stops before consuming the final 10 requests.
+Authentication failures stop the cycle and fail immediately; per-app
+permission and unknown-app errors remain visible while other apps continue.
 
 ## Delivery queue and retries
 

@@ -141,9 +141,10 @@ describe("App Store Connect client", () => {
     ).rejects.toBeInstanceOf(AppStoreConnectError);
   });
 
-  it("retries temporary network failures before succeeding", async () => {
+  it("retries temporary network failures with increasing delays", async () => {
     const fetchMock = vi
       .fn()
+      .mockRejectedValueOnce(new Error("temporary timeout"))
       .mockRejectedValueOnce(new Error("temporary timeout"))
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ data: [], links: {} }), {
@@ -161,8 +162,102 @@ describe("App Store Connect client", () => {
         wait,
       ),
     ).resolves.toEqual({ reviews: [], nextUrl: undefined });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls).toEqual([[5_000], [20_000]]);
+  });
+
+  it("honors a reasonable Retry-After delay from Apple", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("", {
+          status: 429,
+          headers: { "retry-after": "12" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [], links: {} }), {
+          status: 200,
+        }),
+      );
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        "secret-token",
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).resolves.toEqual({ reviews: [], nextUrl: undefined });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(wait).toHaveBeenCalledWith(500);
+    expect(wait).toHaveBeenCalledWith(12_000);
+  });
+
+  it("stops retrying a rate limit after three total attempts", async () => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 429 }));
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        "secret-token",
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls).toEqual([[5_000], [20_000]]);
+  });
+
+  it("defers immediately when Retry-After is longer than this poll cycle", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("", {
+          status: 429,
+          headers: { "retry-after": "120" },
+        }),
+    );
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        "secret-token",
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).rejects.toMatchObject({ status: 429, retryAfterMs: 120_000 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  it("returns Apple's remaining hourly request allowance", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ data: [], links: {} }), {
+          status: 200,
+          headers: {
+            "x-rate-limit": "user-hour-lim:3500;user-hour-rem:9;",
+          },
+        }),
+    );
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        "secret-token",
+        undefined,
+        fetchMock as unknown as typeof fetch,
+      ),
+    ).resolves.toEqual({
+      reviews: [],
+      nextUrl: undefined,
+      rateLimitRemaining: 9,
+    });
   });
 
   it("does not retry authorization failures", async () => {

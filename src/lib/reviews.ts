@@ -1,3 +1,7 @@
+import {
+  AppStoreConnectError,
+  isRetryableAppStoreConnectError,
+} from "./app-store-connect";
 import type { AppDatabase } from "./database";
 import { escapeTelegramHtml } from "./message";
 import type {
@@ -8,6 +12,7 @@ import type {
 } from "./types";
 
 const MAX_PAGES_PER_APP = 5;
+const APP_STORE_CONNECT_RATE_LIMIT_RESERVE = 10;
 
 function truncate(value: string, length: number): string {
   const characters = [...value.trim()];
@@ -61,14 +66,30 @@ export function formatCustomerReviewMessage(
 export type ReviewPageFetcher = (
   appAppleId: number,
   nextUrl?: string,
-) => Promise<{ reviews: CustomerReview[]; nextUrl?: string }>;
+) => Promise<{
+  reviews: CustomerReview[];
+  nextUrl?: string;
+  rateLimitRemaining?: number;
+}>;
+
+export type ReviewPollDeferredReason =
+  | "rate_limit"
+  | "rate_limit_headroom"
+  | "temporary_unavailable";
 
 export interface ReviewPollResult {
   apps: number;
+  attemptedApps: number;
   baselineApps: number;
   stored: number;
   queued: number;
   failed: number;
+  deferred: boolean;
+  deferredReason?: ReviewPollDeferredReason;
+}
+
+function deferredReason(error: AppStoreConnectError): ReviewPollDeferredReason {
+  return error.status === 429 ? "rate_limit" : "temporary_unavailable";
 }
 
 export function queueStoredCustomerReviewNotifications(
@@ -101,13 +122,16 @@ export async function pollCustomerReviews(
   const apps = database.listApps(false);
   const result: ReviewPollResult = {
     apps: apps.length,
+    attemptedApps: 0,
     baselineApps: 0,
     stored: 0,
     queued: 0,
     failed: 0,
+    deferred: false,
   };
 
-  for (const app of apps) {
+  for (const [appIndex, app] of apps.entries()) {
+    result.attemptedApps += 1;
     let nextUrl: string | undefined;
     try {
       for (
@@ -135,18 +159,37 @@ export async function pollCustomerReviews(
         result.queued += stored.queued;
 
         nextUrl = page.nextUrl;
-        if (
+        const appPollComplete =
           stored.baselineCreated ||
           hadKnownReview ||
           !nextUrl ||
-          page.reviews.length === 0
+          page.reviews.length === 0;
+        const moreRequestsNeeded =
+          !appPollComplete || appIndex < apps.length - 1;
+        if (
+          moreRequestsNeeded &&
+          page.rateLimitRemaining !== undefined &&
+          page.rateLimitRemaining <= APP_STORE_CONNECT_RATE_LIMIT_RESERVE
         ) {
+          result.deferred = true;
+          result.deferredReason = "rate_limit_headroom";
+          return result;
+        }
+        if (appPollComplete) {
           break;
         }
       }
     } catch (error) {
+      if (isRetryableAppStoreConnectError(error)) {
+        result.deferred = true;
+        result.deferredReason = deferredReason(error);
+        return result;
+      }
       result.failed += 1;
       onError(app, error);
+      if (error instanceof AppStoreConnectError && error.status === 401) {
+        return result;
+      }
     }
   }
 
