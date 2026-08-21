@@ -145,7 +145,7 @@ The three optional notification allowlists control what is delivered:
 
 - `TELEGRAM_PAYMENT_NOTIFICATION_TYPES` contains Apple V2 notification types.
   `SUBSCRIBED,DID_RENEW` means successful initial subscriptions,
-  resubscriptions, renewals, and billing recoveries.
+  introductory free trials, resubscriptions, renewals, and billing recoveries.
 - `TELEGRAM_PAYMENT_ENVIRONMENTS=Production` suppresses every sandbox event.
 - `TELEGRAM_OUTBOX_CATEGORIES=app_review,app_registry` allows customer-review
   alerts and app registration, update, and removal alerts.
@@ -156,6 +156,11 @@ full sanitized payload and event metadata remain available, while delivery is
 recorded accurately as `suppressed` with a timestamp instead of `delivered`.
 The delivery worker applies the current policy to existing queued messages too,
 so enabling a filter does not release an old sandbox or failure backlog.
+
+Apple reports an initiated subscription free trial as `SUBSCRIBED` with subtype
+`INITIAL_BUY` and `offerDiscountType=FREE_TRIAL`. The Telegram alert identifies
+it as a free trial, says that there is no charge now, and includes the trial end
+and post-trial renewal price when Apple provides them.
 
 Generate the webhook secret independently:
 

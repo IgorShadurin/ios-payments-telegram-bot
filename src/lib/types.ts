@@ -20,6 +20,11 @@ export interface PaymentEvent {
   productId?: string;
   productType?: string;
   transactionReason?: string;
+  inAppOwnershipType?: string;
+  offerType?: number;
+  offerIdentifier?: string;
+  offerDiscountType?: string;
+  offerPeriod?: string;
   purchaseDate?: number;
   originalPurchaseDate?: number;
   expiresDate?: number;
@@ -27,6 +32,8 @@ export interface PaymentEvent {
   revocationReason?: number;
   price?: number;
   currency?: string;
+  renewalPrice?: number;
+  renewalCurrency?: string;
   storefront?: string;
   autoRenewProductId?: string;
   autoRenewStatus?: number;

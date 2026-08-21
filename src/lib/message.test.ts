@@ -113,6 +113,36 @@ describe("Telegram message formatting", () => {
     expect(refund).toContain("Refund issued");
   });
 
+  it("reports an initiated free trial without implying an immediate charge", () => {
+    const message = formatTelegramMessage(
+      app,
+      makeEvent({
+        notificationType: "SUBSCRIBED",
+        subtype: "INITIAL_BUY",
+        transactionReason: "PURCHASE",
+        inAppOwnershipType: "PURCHASED",
+        offerType: 1,
+        offerDiscountType: "FREE_TRIAL",
+        offerPeriod: "P1W",
+        price: 0,
+        renewalPrice: 4_990,
+        renewalCurrency: "USD",
+        expiresDate: 1_750_604_800_000,
+        renewalDate: 1_750_604_800_000,
+      }),
+    );
+
+    expect(message).toContain("🆓 Free trial started");
+    expect(message).toContain("Customer initiated a free trial");
+    expect(message).toContain("Introductory free trial");
+    expect(message).toContain("<b>Trial period:</b> 1 week");
+    expect(message).toContain("<b>Amount:</b> Free (no charge now)");
+    expect(message).toContain("<b>After trial:</b> $4.99");
+    expect(message).toContain("<b>Trial ends:</b>");
+    expect(message).not.toContain("First subscription purchase");
+    expect(message).not.toContain("<b>Next renewal:</b>");
+  });
+
   it("escapes Telegram HTML control characters", () => {
     expect(escapeTelegramHtml("<hello> & goodbye")).toBe(
       "&lt;hello&gt; &amp; goodbye",

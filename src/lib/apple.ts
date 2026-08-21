@@ -173,7 +173,7 @@ function requireNumber(value: unknown, field: string): number {
   return value;
 }
 
-function makePaymentEvent(
+export function makePaymentEvent(
   notification: ResponseBodyV2DecodedPayload,
   environment: string,
   transaction?: JWSTransactionDecodedPayload,
@@ -205,6 +205,12 @@ function makePaymentEvent(
     productId: transaction?.productId ?? renewal?.productId,
     productType: transaction?.type,
     transactionReason: transaction?.transactionReason,
+    inAppOwnershipType: transaction?.inAppOwnershipType,
+    offerType: transaction?.offerType ?? renewal?.offerType,
+    offerIdentifier: transaction?.offerIdentifier ?? renewal?.offerIdentifier,
+    offerDiscountType:
+      transaction?.offerDiscountType ?? renewal?.offerDiscountType,
+    offerPeriod: transaction?.offerPeriod ?? renewal?.offerPeriod,
     purchaseDate: transaction?.purchaseDate,
     originalPurchaseDate: transaction?.originalPurchaseDate,
     expiresDate: transaction?.expiresDate,
@@ -212,6 +218,8 @@ function makePaymentEvent(
     revocationReason: transaction?.revocationReason,
     price: transaction?.price ?? renewal?.renewalPrice,
     currency: transaction?.currency ?? renewal?.currency,
+    renewalPrice: renewal?.renewalPrice,
+    renewalCurrency: renewal?.currency,
     storefront: transaction?.storefront,
     autoRenewProductId: renewal?.autoRenewProductId,
     autoRenewStatus: renewal?.autoRenewStatus,

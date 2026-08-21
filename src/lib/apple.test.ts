@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   AppleNotificationError,
   decodeUntrustedRoutingHint,
+  makePaymentEvent,
   verifyAppleNotification,
 } from "./apple";
 import { APPLE_ROOT_CERTIFICATES } from "./apple-root-certificates";
@@ -79,6 +80,55 @@ describe("Apple notification routing", () => {
 
     database.close();
     delete process.env.APPLE_ENABLE_ONLINE_CHECKS;
+  });
+});
+
+describe("Apple payment event extraction", () => {
+  it("promotes verified free-trial fields for delivery formatting", () => {
+    const event = makePaymentEvent(
+      {
+        notificationType: "SUBSCRIBED",
+        subtype: "INITIAL_BUY",
+        notificationUUID: "69af5e64-44eb-42d0-891c-9b36fdb9d7f2",
+        signedDate: 1_750_000_000_000,
+      },
+      "Production",
+      {
+        transactionId: "2000000123456789",
+        productId: "premium.monthly",
+        type: "Auto-Renewable Subscription",
+        transactionReason: "PURCHASE",
+        inAppOwnershipType: "PURCHASED",
+        offerType: 1,
+        offerDiscountType: "FREE_TRIAL",
+        offerPeriod: "P1W",
+        price: 0,
+        currency: "USD",
+        expiresDate: 1_750_604_800_000,
+      },
+      {
+        productId: "premium.monthly",
+        offerType: 1,
+        offerDiscountType: "FREE_TRIAL",
+        offerPeriod: "P1W",
+        renewalPrice: 4_990,
+        currency: "USD",
+        renewalDate: 1_750_604_800_000,
+      },
+    );
+
+    expect(event).toMatchObject({
+      notificationType: "SUBSCRIBED",
+      subtype: "INITIAL_BUY",
+      transactionReason: "PURCHASE",
+      inAppOwnershipType: "PURCHASED",
+      offerType: 1,
+      offerDiscountType: "FREE_TRIAL",
+      offerPeriod: "P1W",
+      price: 0,
+      renewalPrice: 4_990,
+      renewalCurrency: "USD",
+    });
   });
 });
 

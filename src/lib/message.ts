@@ -8,8 +8,19 @@ export function escapeTelegramHtml(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
-function eventTitle(type: string, subtype?: string): string {
-  const key = `${type}:${subtype ?? ""}`;
+function isFreeTrial(event: PaymentEvent): boolean {
+  return event.offerDiscountType?.toUpperCase() === "FREE_TRIAL";
+}
+
+function eventTitle(event: PaymentEvent): string {
+  if (isFreeTrial(event) && event.notificationType === "SUBSCRIBED") {
+    return "🆓 Free trial started";
+  }
+  if (isFreeTrial(event) && event.notificationType === "OFFER_REDEEMED") {
+    return "🆓 Free-trial offer redeemed";
+  }
+
+  const key = `${event.notificationType}:${event.subtype ?? ""}`;
   const exact: Record<string, string> = {
     "SUBSCRIBED:INITIAL_BUY": "🟢 New subscription",
     "SUBSCRIBED:RESUBSCRIBE": "🔁 Subscription restarted",
@@ -46,7 +57,10 @@ function eventTitle(type: string, subtype?: string): string {
     METADATA_UPDATE: "📝 Purchase metadata updated",
     MIGRATION: "🚚 Purchase migrated",
   };
-  return titles[type] ?? `📱 ${type.replaceAll("_", " ").toLowerCase()}`;
+  return (
+    titles[event.notificationType] ??
+    `📱 ${event.notificationType.replaceAll("_", " ").toLowerCase()}`
+  );
 }
 
 function formatDate(timestamp: number): string {
@@ -80,6 +94,25 @@ function formatUsd(amount: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatOfferPeriod(period: string | undefined): string | undefined {
+  if (!period) {
+    return undefined;
+  }
+  const match = /^P(\d+)([DWMY])$/.exec(period.toUpperCase());
+  if (!match) {
+    return period;
+  }
+  const count = Number(match[1]);
+  const units: Record<string, string> = {
+    D: "day",
+    W: "week",
+    M: "month",
+    Y: "year",
+  };
+  const unit = units[match[2]];
+  return `${count} ${unit}${count === 1 ? "" : "s"}`;
 }
 
 function formatAmount(
@@ -176,6 +209,18 @@ function paymentTypeLabel(event: PaymentEvent): string | undefined {
 }
 
 function actionLabel(event: PaymentEvent): string | undefined {
+  if (isFreeTrial(event)) {
+    if (event.inAppOwnershipType === "FAMILY_SHARED") {
+      return "Free-trial access shared with a family member";
+    }
+    if (event.notificationType === "SUBSCRIBED") {
+      return "Customer initiated a free trial";
+    }
+    if (event.notificationType === "OFFER_REDEEMED") {
+      return "Customer redeemed a free-trial offer";
+    }
+  }
+
   const key = `${event.notificationType}:${event.subtype ?? ""}`;
   const exact: Record<string, string> = {
     "SUBSCRIBED:INITIAL_BUY": "First subscription purchase",
@@ -225,11 +270,22 @@ export function formatTelegramMessage(
   exchangeRate?: ExchangeRate,
 ): string {
   const environment = environmentLabel(event.environment);
-  const amount =
-    event.price !== undefined
+  const freeTrial = isFreeTrial(event);
+  const amount = freeTrial
+    ? { value: "Free (no charge now)", converted: false }
+    : event.price !== undefined
       ? formatAmount(
           event.price,
           event.currency,
+          exchangeRate,
+          environment.isTest,
+        )
+      : undefined;
+  const renewalAmount =
+    freeTrial && event.renewalPrice !== undefined
+      ? formatAmount(
+          event.renewalPrice,
+          event.renewalCurrency ?? event.currency,
           exchangeRate,
           environment.isTest,
         )
@@ -239,8 +295,20 @@ export function formatTelegramMessage(
     line("Action", actionLabel(event)),
     line("Payment type", paymentTypeLabel(event)),
     line("Product", event.productId),
+    freeTrial
+      ? line(
+          "Offer",
+          event.offerType === 1
+            ? "Introductory free trial"
+            : "Free-trial offer",
+        )
+      : undefined,
+    freeTrial
+      ? line("Trial period", formatOfferPeriod(event.offerPeriod))
+      : undefined,
     amount ? line("Amount", amount.value) : undefined,
-    amount?.converted && exchangeRate
+    renewalAmount ? line("After trial", renewalAmount.value) : undefined,
+    (amount?.converted || renewalAmount?.converted) && exchangeRate
       ? `<b>FX rate:</b> <a href="${EXCHANGE_RATE_PROVIDER_URL}">ExchangeRate-API</a> (${escapeTelegramHtml(
           formatDate(exchangeRate.sourceUpdatedAt),
         )})`
@@ -258,9 +326,12 @@ export function formatTelegramMessage(
       ? line("Purchased", formatDate(event.purchaseDate))
       : undefined,
     event.expiresDate
-      ? line("Expires", formatDate(event.expiresDate))
+      ? line(
+          freeTrial ? "Trial ends" : "Expires",
+          formatDate(event.expiresDate),
+        )
       : undefined,
-    event.renewalDate
+    event.renewalDate && !freeTrial
       ? line("Next renewal", formatDate(event.renewalDate))
       : undefined,
     event.revocationDate
@@ -271,7 +342,7 @@ export function formatTelegramMessage(
   return [
     `<b>${escapeTelegramHtml(
       titleWithEnvironment(
-        eventTitle(event.notificationType, event.subtype),
+        eventTitle(event),
         environment.titleTag,
         environment.isTest ? "🧪" : undefined,
       ),
