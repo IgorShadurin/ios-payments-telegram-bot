@@ -34,7 +34,6 @@ COPY --from=dependencies --chown=nextjs:nodejs /app/node_modules/zod ./node_modu
 COPY --from=dependencies --chown=nextjs:nodejs /app/node_modules/sharp ./node_modules/sharp
 COPY --from=dependencies --chown=nextjs:nodejs /app/node_modules/@img ./node_modules/@img
 COPY --from=dependencies --chown=nextjs:nodejs /app/node_modules/detect-libc ./node_modules/detect-libc
-COPY --from=dependencies --chown=nextjs:nodejs /app/node_modules/semver ./node_modules/semver
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/dist ./dist
