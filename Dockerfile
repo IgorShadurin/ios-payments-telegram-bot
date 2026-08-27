@@ -20,14 +20,15 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV DATABASE_PATH=/data/ios-payments.sqlite
+ENV XDG_CACHE_HOME=/home/nextjs/.cache
 
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends curl fontconfig fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 nodejs \
   && useradd --system --uid 1001 --gid nodejs nextjs \
-  && mkdir -p /data \
-  && chown nextjs:nodejs /data
+  && mkdir -p /data /home/nextjs/.cache/fontconfig \
+  && chown -R nextjs:nodejs /data /home/nextjs
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=dependencies --chown=nextjs:nodejs /app/node_modules/zod ./node_modules/zod
