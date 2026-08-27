@@ -3,7 +3,7 @@ import {
   AppStoreAnalyticsError,
 } from "../src/lib/app-store-analytics";
 import { createAppStoreConnectToken } from "../src/lib/app-store-connect";
-import { getAppStoreAnalyticsConfig } from "../src/lib/config";
+import { getAppStoreAnalyticsSetupConfig } from "../src/lib/config";
 import { AppDatabase } from "../src/lib/database";
 
 async function main(): Promise<void> {
@@ -14,7 +14,7 @@ async function main(): Promise<void> {
       throw new Error("No enabled apps are registered");
     }
     const client = new AppStoreAnalyticsClient(
-      createAppStoreConnectToken(getAppStoreAnalyticsConfig()),
+      createAppStoreConnectToken(getAppStoreAnalyticsSetupConfig()),
     );
     let created = 0;
     let existing = 0;

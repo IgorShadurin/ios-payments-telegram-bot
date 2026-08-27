@@ -1,6 +1,10 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { getAppStoreAnalyticsConfig, getAppStoreConnectConfig } from "./config";
+import {
+  getAppStoreAnalyticsConfig,
+  getAppStoreAnalyticsSetupConfig,
+  getAppStoreConnectConfig,
+} from "./config";
 
 const managedKeys = [
   "APP_STORE_CONNECT_KEY_TYPE",
@@ -13,6 +17,11 @@ const managedKeys = [
   "APPLE_ANALYTICS_KEY_ID",
   "APPLE_ANALYTICS_PRIVATE_KEY",
   "APPLE_ANALYTICS_PRIVATE_KEY_BASE64",
+  "APPLE_ANALYTICS_SETUP_KEY_TYPE",
+  "APPLE_ANALYTICS_SETUP_ISSUER_ID",
+  "APPLE_ANALYTICS_SETUP_KEY_ID",
+  "APPLE_ANALYTICS_SETUP_PRIVATE_KEY",
+  "APPLE_ANALYTICS_SETUP_PRIVATE_KEY_BASE64",
 ] as const;
 const originalValues = new Map(
   managedKeys.map((key) => [key, process.env[key]]),
@@ -64,6 +73,24 @@ describe("App Store Connect configuration", () => {
 
     expect(getAppStoreAnalyticsConfig()).toMatchObject({
       keyId: "REPORTKEY",
+      keyType: "team",
+    });
+  });
+
+  it("uses a separate Admin credential only for analytics setup", () => {
+    const { privateKey } = generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+    });
+    process.env.APPLE_ANALYTICS_SETUP_KEY_TYPE = "team";
+    process.env.APPLE_ANALYTICS_SETUP_ISSUER_ID =
+      "69a6de70-5c3f-47e3-e053-5b8c7c11a4d1";
+    process.env.APPLE_ANALYTICS_SETUP_KEY_ID = "SETUPKEY";
+    process.env.APPLE_ANALYTICS_SETUP_PRIVATE_KEY_BASE64 = Buffer.from(
+      privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+    ).toString("base64");
+
+    expect(getAppStoreAnalyticsSetupConfig()).toMatchObject({
+      keyId: "SETUPKEY",
       keyType: "team",
     });
   });

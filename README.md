@@ -128,6 +128,15 @@ the existing `APP_STORE_CONNECT_*` key. Dedicated credentials let the review
 worker keep its least-privilege Customer Support key while report downloads use
 Sales and Reports access.
 
+For durable production recovery, keep a separate Admin key named
+`DO NOT DELETE - Analytics Setup` in App Store Connect and configure it with
+`APPLE_ANALYTICS_SETUP_KEY_TYPE`, `APPLE_ANALYTICS_SETUP_ISSUER_ID`,
+`APPLE_ANALYTICS_SETUP_KEY_ID`, and
+`APPLE_ANALYTICS_SETUP_PRIVATE_KEY_BASE64`. Only `analytics:setup` reads these
+variables; the scheduled daily worker never receives Admin authority. Apple
+does not provide an undeletable-key flag, so the explicit name is the deletion
+warning.
+
 The first successful poll for each app creates a silent baseline from its most
 recent reviews. It does not send old reviews. Later polls store and enqueue only
 previously unseen Apple review IDs. Up to 1,000 reviews per app can be scanned
