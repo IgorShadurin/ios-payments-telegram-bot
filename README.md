@@ -55,11 +55,12 @@ token signed with an App Store Connect API key.
 
 ## Daily App Store portfolio report
 
-The daily report worker creates one compact PNG for the previous Minsk calendar
-day and sends it to the configured Telegram chat. A portfolio summary appears
-first, followed by every enabled registered app with its public App Store icon,
-product-page views, downloads, and earnings. Apps are sorted by estimated
-proceeds, then by product-page views.
+The daily report worker creates compact PNG pages for the previous Minsk
+calendar day and sends them to the configured Telegram chat as one album. It
+retrieves and totals every enabled registered app before rendering, sorts the
+full portfolio by estimated proceeds and then product-page views, and places at
+most 10 apps on each page. The portfolio summary appears only on page 1; global
+rank and a `Page N of M` label continue across every page.
 
 The metrics come from Apple's official Analytics Reports API:
 
@@ -101,7 +102,7 @@ the worker preserves that headroom and pauses for one hour before making
 another App Store Connect request.
 
 Daily report delivery is idempotent by report date. A successful Telegram
-photo is not sent again. A failed run becomes retryable after 15 minutes, so a
+album is not sent again. A failed run becomes retryable after 15 minutes, so a
 scheduled task can safely run at 19:00 and continue making catch-up attempts.
 
 For a scheduler configured in `Europe/Minsk`, use this expression to start at

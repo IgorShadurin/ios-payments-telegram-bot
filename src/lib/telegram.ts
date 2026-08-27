@@ -17,6 +17,23 @@ const telegramResponseSchema = z.object({
     .optional(),
 });
 
+const telegramMediaGroupResponseSchema = z.object({
+  ok: z.boolean(),
+  description: z.string().optional(),
+  result: z
+    .array(
+      z.object({
+        message_id: z.number().int(),
+      }),
+    )
+    .optional(),
+  parameters: z
+    .object({
+      retry_after: z.number().int().positive().optional(),
+    })
+    .optional(),
+});
+
 export class TelegramDeliveryError extends Error {
   constructor(
     message: string,
@@ -148,4 +165,91 @@ export async function sendTelegramPhoto(
     );
   }
   return parsed.data.result.message_id;
+}
+
+export async function sendTelegramPhotoGroup(
+  imagePaths: readonly string[],
+  caption: string,
+  options: TelegramMessageOptions = {},
+): Promise<number[]> {
+  if (imagePaths.length === 1) {
+    return [await sendTelegramPhoto(imagePaths[0], caption, options)];
+  }
+  if (imagePaths.length < 2 || imagePaths.length > 10) {
+    throw new TelegramDeliveryError(
+      "A Telegram photo group must contain between 2 and 10 images",
+    );
+  }
+  const config = getTelegramConfig();
+  const images = await Promise.all(
+    imagePaths.map((imagePath) => fs.readFile(imagePath)),
+  );
+  if (
+    images.some(
+      (image) => image.length === 0 || image.length > 10 * 1024 * 1024,
+    )
+  ) {
+    throw new TelegramDeliveryError(
+      "Each Telegram report image must be between 1 byte and 10 MB",
+    );
+  }
+  const body = new FormData();
+  body.set("chat_id", options.chatId ?? config.chatId);
+  body.set(
+    "media",
+    JSON.stringify(
+      images.map((_, index) => ({
+        type: "photo",
+        media: `attach://photo${index}`,
+        ...(index === 0 ? { caption, parse_mode: "HTML" } : {}),
+      })),
+    ),
+  );
+  images.forEach((image, index) => {
+    body.set(
+      `photo${index}`,
+      new Blob([image], { type: "image/png" }),
+      `report-page-${index + 1}.png`,
+    );
+  });
+  const messageThreadId =
+    options.messageThreadId ??
+    (options.chatId === undefined ? config.messageThreadId : undefined);
+  if (messageThreadId) {
+    body.set("message_thread_id", String(messageThreadId));
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.telegram.org/bot${encodeURIComponent(config.botToken)}/sendMediaGroup`,
+      {
+        method: "POST",
+        body,
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+  } catch {
+    throw new TelegramDeliveryError("Telegram photo-group request failed");
+  }
+
+  const responseBody: unknown = await response.json().catch(() => undefined);
+  const parsed = telegramMediaGroupResponseSchema.safeParse(responseBody);
+  if (
+    !parsed.success ||
+    !response.ok ||
+    !parsed.data.ok ||
+    !parsed.data.result ||
+    parsed.data.result.length !== imagePaths.length
+  ) {
+    const description =
+      parsed.success && parsed.data.description
+        ? parsed.data.description.slice(0, 200)
+        : `HTTP ${response.status}`;
+    throw new TelegramDeliveryError(
+      `Telegram rejected the photo group: ${description}`,
+      parsed.success ? parsed.data.parameters?.retry_after : undefined,
+    );
+  }
+  return parsed.data.result.map((message) => message.message_id);
 }

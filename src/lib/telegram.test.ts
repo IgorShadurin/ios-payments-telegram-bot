@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sendTelegramMessage, sendTelegramPhoto } from "./telegram";
+import {
+  sendTelegramMessage,
+  sendTelegramPhoto,
+  sendTelegramPhotoGroup,
+} from "./telegram";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -99,6 +103,42 @@ describe("sendTelegramMessage", () => {
     expect(url).toContain("/sendPhoto");
     expect(init?.body).toBeInstanceOf(FormData);
     expect((init?.body as FormData).get("caption")).toBe("<b>Report</b>");
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("uploads paginated reports as one Telegram media group", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = `1:${"x".repeat(24)}`;
+    process.env.TELEGRAM_CHAT_ID = "123";
+    const directory = mkdtempSync(path.join(tmpdir(), "telegram-album-"));
+    const imagePaths = ["page-1.png", "page-2.png", "page-3.png"].map((name) =>
+      path.join(directory, name),
+    );
+    imagePaths.forEach((imagePath) => {
+      writeFileSync(imagePath, "fake-png");
+    });
+    const fetchMock = vi.fn(
+      async (_input: URL | RequestInfo, _init?: RequestInit) =>
+        Response.json({
+          ok: true,
+          result: imagePaths.map((_, index) => ({ message_id: 201 + index })),
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      sendTelegramPhotoGroup(imagePaths, "<b>Report</b>"),
+    ).resolves.toEqual([201, 202, 203]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/sendMediaGroup");
+    const body = init?.body as FormData;
+    const media = JSON.parse(String(body.get("media")));
+    expect(media).toHaveLength(3);
+    expect(media[0]).toMatchObject({
+      media: "attach://photo0",
+      caption: "<b>Report</b>",
+      parse_mode: "HTML",
+    });
+    expect(media[1]).not.toHaveProperty("caption");
     rmSync(directory, { recursive: true, force: true });
   });
 });

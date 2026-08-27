@@ -22,7 +22,7 @@ ENV PORT=3000
 ENV DATABASE_PATH=/data/ios-payments.sqlite
 
 RUN apt-get update \
-  && apt-get install --yes --no-install-recommends curl \
+  && apt-get install --yes --no-install-recommends curl fontconfig fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 nodejs \
   && useradd --system --uid 1001 --gid nodejs nextjs \

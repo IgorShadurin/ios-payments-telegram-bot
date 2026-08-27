@@ -16,7 +16,10 @@ import {
 } from "../src/lib/daily-report";
 import { AppDatabase } from "../src/lib/database";
 import { escapeTelegramHtml } from "../src/lib/message";
-import { sendTelegramPhoto, TelegramDeliveryError } from "../src/lib/telegram";
+import {
+  sendTelegramPhotoGroup,
+  TelegramDeliveryError,
+} from "../src/lib/telegram";
 import type {
   DailyAppMetrics,
   DailyPortfolioReport,
@@ -212,8 +215,8 @@ async function renderSample(
     apps: sampleApps,
     isSample: true,
   };
-  await renderDailyReportPng(report, outputPath);
-  console.log(JSON.stringify({ sample: true, reportDate, outputPath }));
+  const outputPaths = await renderDailyReportPng(report, outputPath);
+  console.log(JSON.stringify({ sample: true, reportDate, outputPaths }));
 }
 
 async function main(): Promise<void> {
@@ -285,15 +288,18 @@ async function main(): Promise<void> {
         timeZone: DAILY_REPORT_TIME_ZONE,
         apps: metrics,
       };
-      await renderDailyReportPng(report, outputPath);
+      const outputPaths = await renderDailyReportPng(report, outputPath);
       if (values["no-send"]) {
-        console.log(JSON.stringify({ reportDate, outputPath, sent: false }));
+        console.log(JSON.stringify({ reportDate, outputPaths, sent: false }));
         return;
       }
-      const messageId = await sendTelegramPhoto(outputPath, caption(report));
-      database.markDailyReportDelivered(reportDate, messageId);
+      const messageIds = await sendTelegramPhotoGroup(
+        outputPaths,
+        caption(report),
+      );
+      database.markDailyReportDelivered(reportDate, messageIds[0]);
       console.log(
-        JSON.stringify({ reportDate, outputPath, sent: true, messageId }),
+        JSON.stringify({ reportDate, outputPaths, sent: true, messageIds }),
       );
     } catch (error) {
       if (shouldTrackDelivery) {
