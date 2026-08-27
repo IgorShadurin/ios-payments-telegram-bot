@@ -53,6 +53,81 @@ its App Store Connect webhook event types, so review alerts use scheduled
 polling instead of a webhook. Review API responses require a short-lived ES256
 token signed with an App Store Connect API key.
 
+## Daily App Store portfolio report
+
+The daily report worker creates one compact PNG for the previous Minsk calendar
+day and sends it to the configured Telegram chat. A portfolio summary appears
+first, followed by every enabled registered app with its public App Store icon,
+product-page views, downloads, and earnings. Apps are sorted by estimated
+proceeds, then by product-page views.
+
+The metrics come from Apple's official Analytics Reports API:
+
+- **Product page views** are `Page view` events for `Product page` rows in the
+  App Store Discovery and Engagement Standard report.
+- **Downloads** are first-time downloads and redownloads from the App Store
+  Downloads Standard report; updates are intentionally excluded.
+- **Earnings** are Apple's estimated `Proceeds in USD` from the App Store
+  Purchases Standard report, net of applicable taxes and Apple's commission.
+
+Previous-day data can still change. Apple considers downloads and proceeds
+complete within two days, and engagement within three days. An orange marker
+and an em dash mean Apple has not published a metric yet; the worker never
+turns missing data into a misleading zero.
+
+Analytics report requests need one-time setup. Use an App Store Connect Admin
+API key for this command:
+
+```bash
+npm run analytics:setup:dev
+```
+
+Apple normally produces the first ongoing reports 24-48 hours later. After
+setup, the daily worker can use an API key with the **Sales and Reports** role:
+
+```bash
+# Preview without Telegram delivery
+npm run report:daily:dev -- --no-send
+
+# Generate and send the previous-day PNG
+npm run report:daily:dev
+```
+
+The worker validates every compressed analytics segment against Apple's size
+and MD5 checksum. Temporary network errors, Apple `429` responses, and Apple
+`5xx` responses are retried. `Retry-After` controls the pause when present. If
+Apple's `X-Rate-Limit` header reports 20 or fewer hourly requests remaining,
+the worker preserves that headroom and pauses for one hour before making
+another App Store Connect request.
+
+Daily report delivery is idempotent by report date. A successful Telegram
+photo is not sent again. A failed run becomes retryable after 15 minutes, so a
+scheduled task can safely run at 19:00 and continue making catch-up attempts.
+
+For a scheduler configured in `Europe/Minsk`, use this expression to start at
+19:00 and retry every 15 minutes through 21:45:
+
+```text
+0,15,30,45 19-21 * * *
+```
+
+The production command is:
+
+```bash
+node dist/scripts/daily-report.js
+```
+
+Set `DAILY_REPORT_OUTPUT_DIR=/data/reports` to keep generated PNGs in the
+persistent volume. If the scheduler only supports UTC, the equivalent current
+window is `0,15,30,45 16-18 * * *`.
+
+Use the optional `APPLE_ANALYTICS_KEY_TYPE`, `APPLE_ANALYTICS_ISSUER_ID`,
+`APPLE_ANALYTICS_KEY_ID`, and `APPLE_ANALYTICS_PRIVATE_KEY_BASE64` variables
+for a dedicated analytics key. When they are omitted, the worker falls back to
+the existing `APP_STORE_CONNECT_*` key. Dedicated credentials let the review
+worker keep its least-privilege Customer Support key while report downloads use
+Sales and Reports access.
+
 The first successful poll for each app creates a silent baseline from its most
 recent reviews. It does not send old reviews. Later polls store and enqueue only
 previously unseen Apple review IDs. Up to 1,000 reviews per app can be scanned

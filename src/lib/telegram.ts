@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { z } from "zod";
 import { getTelegramConfig } from "./config";
 
@@ -85,6 +86,64 @@ export async function sendTelegramMessage(
         : `HTTP ${response.status}`;
     throw new TelegramDeliveryError(
       `Telegram rejected the message: ${description}`,
+      parsed.success ? parsed.data.parameters?.retry_after : undefined,
+    );
+  }
+  return parsed.data.result.message_id;
+}
+
+export async function sendTelegramPhoto(
+  imagePath: string,
+  caption: string,
+  options: TelegramMessageOptions = {},
+): Promise<number> {
+  const config = getTelegramConfig();
+  const image = await fs.readFile(imagePath);
+  if (image.length === 0 || image.length > 10 * 1024 * 1024) {
+    throw new TelegramDeliveryError(
+      "Telegram report image must be between 1 byte and 10 MB",
+    );
+  }
+  const body = new FormData();
+  body.set("chat_id", options.chatId ?? config.chatId);
+  body.set("photo", new Blob([image], { type: "image/png" }), "report.png");
+  body.set("caption", caption);
+  body.set("parse_mode", "HTML");
+  const messageThreadId =
+    options.messageThreadId ??
+    (options.chatId === undefined ? config.messageThreadId : undefined);
+  if (messageThreadId) {
+    body.set("message_thread_id", String(messageThreadId));
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.telegram.org/bot${encodeURIComponent(config.botToken)}/sendPhoto`,
+      {
+        method: "POST",
+        body,
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+  } catch {
+    throw new TelegramDeliveryError("Telegram photo request failed");
+  }
+
+  const responseBody: unknown = await response.json().catch(() => undefined);
+  const parsed = telegramResponseSchema.safeParse(responseBody);
+  if (
+    !parsed.success ||
+    !response.ok ||
+    !parsed.data.ok ||
+    !parsed.data.result
+  ) {
+    const description =
+      parsed.success && parsed.data.description
+        ? parsed.data.description.slice(0, 200)
+        : `HTTP ${response.status}`;
+    throw new TelegramDeliveryError(
+      `Telegram rejected the photo: ${description}`,
       parsed.success ? parsed.data.parameters?.retry_after : undefined,
     );
   }

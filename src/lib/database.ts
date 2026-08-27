@@ -10,6 +10,7 @@ import type {
   RegisteredApp,
   StoredCustomerReview,
   StoredCustomerReviewWithApp,
+  StoredDailyReportDelivery,
   StoredNotification,
   StoredTelegramOutboxMessage,
 } from "./types";
@@ -88,6 +89,19 @@ interface ExchangeRateRow {
   next_update_at: number;
   fetched_at: number;
   provider: string;
+}
+
+interface DailyReportDeliveryRow {
+  report_date: string;
+  delivery_status: StoredDailyReportDelivery["deliveryStatus"];
+  delivery_attempts: number;
+  next_attempt_at: number;
+  locked_at: number | null;
+  image_path: string;
+  last_error: string | null;
+  telegram_message_id: number | null;
+  created_at: number;
+  delivered_at: number | null;
 }
 
 function mapApp(row: AppRow): RegisteredApp {
@@ -182,6 +196,22 @@ function mapExchangeRate(row: ExchangeRateRow): ExchangeRate {
   };
 }
 
+function mapDailyReportDelivery(
+  row: DailyReportDeliveryRow,
+): StoredDailyReportDelivery {
+  return {
+    reportDate: row.report_date,
+    deliveryStatus: row.delivery_status,
+    deliveryAttempts: row.delivery_attempts,
+    nextAttemptAt: row.next_attempt_at,
+    imagePath: row.image_path,
+    lastError: row.last_error ?? undefined,
+    telegramMessageId: row.telegram_message_id ?? undefined,
+    createdAt: row.created_at,
+    deliveredAt: row.delivered_at ?? undefined,
+  };
+}
+
 export class AppDatabase {
   private readonly database: Database.Database;
 
@@ -199,7 +229,7 @@ export class AppDatabase {
       simple: true,
     }) as number;
 
-    if (version > 5) {
+    if (version > 6) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -464,6 +494,33 @@ export class AppDatabase {
           PRAGMA user_version = 5;
         `);
       })();
+      version = 5;
+    }
+
+    if (version === 5) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE daily_report_deliveries (
+            report_date TEXT PRIMARY KEY
+              CHECK (report_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            delivery_status TEXT NOT NULL DEFAULT 'pending'
+              CHECK (delivery_status IN ('pending', 'sending', 'retry', 'delivered')),
+            delivery_attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL,
+            locked_at INTEGER,
+            image_path TEXT NOT NULL,
+            last_error TEXT,
+            telegram_message_id INTEGER,
+            created_at INTEGER NOT NULL,
+            delivered_at INTEGER
+          );
+
+          CREATE INDEX daily_report_deliveries_due_idx
+            ON daily_report_deliveries(delivery_status, next_attempt_at);
+
+          PRAGMA user_version = 6;
+        `);
+      })();
     }
   }
 
@@ -566,6 +623,79 @@ export class AppDatabase {
       .prepare("SELECT COUNT(*) AS count FROM apps WHERE enabled = 1")
       .get() as { count: number };
     return row.count;
+  }
+
+  getDailyReportDelivery(
+    reportDate: string,
+  ): StoredDailyReportDelivery | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM daily_report_deliveries WHERE report_date = ?")
+      .get(reportDate) as DailyReportDeliveryRow | undefined;
+    return row ? mapDailyReportDelivery(row) : undefined;
+  }
+
+  claimDailyReportDelivery(
+    reportDate: string,
+    imagePath: string,
+  ): StoredDailyReportDelivery | undefined {
+    const now = Date.now();
+    const staleLock = now - 90 * 60 * 1_000;
+    return this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO daily_report_deliveries (
+            report_date, delivery_status, next_attempt_at, image_path, created_at
+          ) VALUES (?, 'pending', ?, ?, ?)
+          ON CONFLICT(report_date) DO NOTHING`,
+        )
+        .run(reportDate, now, imagePath, now);
+      const result = this.database
+        .prepare(
+          `UPDATE daily_report_deliveries
+           SET delivery_status = 'sending', locked_at = ?, image_path = ?
+           WHERE report_date = ?
+             AND (
+               (delivery_status IN ('pending', 'retry') AND next_attempt_at <= ?)
+               OR (delivery_status = 'sending' AND locked_at < ?)
+             )`,
+        )
+        .run(now, imagePath, reportDate, now, staleLock);
+      return result.changes === 1
+        ? this.getDailyReportDelivery(reportDate)
+        : undefined;
+    })();
+  }
+
+  markDailyReportDelivered(
+    reportDate: string,
+    telegramMessageId: number,
+  ): void {
+    this.database
+      .prepare(
+        `UPDATE daily_report_deliveries
+         SET delivery_status = 'delivered',
+             delivery_attempts = delivery_attempts + 1,
+             telegram_message_id = ?, delivered_at = ?, locked_at = NULL,
+             last_error = NULL
+         WHERE report_date = ? AND delivery_status = 'sending'`,
+      )
+      .run(telegramMessageId, Date.now(), reportDate);
+  }
+
+  markDailyReportForRetry(
+    reportDate: string,
+    error: string,
+    nextAttemptAt: number,
+  ): void {
+    this.database
+      .prepare(
+        `UPDATE daily_report_deliveries
+         SET delivery_status = 'retry',
+             delivery_attempts = delivery_attempts + 1,
+             next_attempt_at = ?, locked_at = NULL, last_error = ?
+         WHERE report_date = ? AND delivery_status = 'sending'`,
+      )
+      .run(nextAttemptAt, error.slice(0, 500), reportDate);
   }
 
   enqueueTelegramMessage(

@@ -12,9 +12,11 @@
   "include": [
     "scripts/**/*.ts",
     "src/lib/config.ts",
+    "src/lib/app-store-analytics.ts",
     "src/lib/app-store-connect.ts",
     "src/lib/database.ts",
     "src/lib/delivery.ts",
+    "src/lib/daily-report.ts",
     "src/lib/exchange-rates.ts",
     "src/lib/message.ts",
     "src/lib/notification-policy.ts",

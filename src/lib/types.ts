@@ -134,3 +134,38 @@ export interface ExchangeRate {
   fetchedAt: number;
   provider: string;
 }
+
+export type DailyMetricAvailability = "available" | "pending";
+
+export interface DailyAppMetrics {
+  appAppleId: number;
+  name: string;
+  bundleId: string;
+  iconUrl?: string;
+  productPageViews?: number;
+  downloads?: number;
+  proceedsUsd?: number;
+  viewsAvailability: DailyMetricAvailability;
+  downloadsAvailability: DailyMetricAvailability;
+  proceedsAvailability: DailyMetricAvailability;
+}
+
+export interface DailyPortfolioReport {
+  reportDate: string;
+  generatedAt: string;
+  timeZone: string;
+  apps: DailyAppMetrics[];
+  isSample?: boolean;
+}
+
+export interface StoredDailyReportDelivery {
+  reportDate: string;
+  deliveryStatus: "pending" | "sending" | "retry" | "delivered";
+  deliveryAttempts: number;
+  nextAttemptAt: number;
+  imagePath: string;
+  lastError?: string;
+  telegramMessageId?: number;
+  createdAt: number;
+  deliveredAt?: number;
+}

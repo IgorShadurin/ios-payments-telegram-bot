@@ -115,7 +115,10 @@ export function appleOnlineChecksEnabled(): boolean {
   );
 }
 
-function decodePrivateKeyBase64(value: string): string {
+function decodePrivateKeyBase64(
+  value: string,
+  variableName = "APP_STORE_CONNECT_PRIVATE_KEY_BASE64",
+): string {
   if (
     value.length > 20_000 ||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
@@ -123,7 +126,7 @@ function decodePrivateKeyBase64(value: string): string {
     )
   ) {
     throw new Error(
-      "App Store Connect configuration is invalid: APP_STORE_CONNECT_PRIVATE_KEY_BASE64",
+      `App Store Connect configuration is invalid: ${variableName}`,
     );
   }
   return Buffer.from(value, "base64").toString("utf8");
@@ -180,5 +183,73 @@ export function getAppStoreConnectConfig(): AppStoreConnectConfig {
     issuerId: parsed.data.APP_STORE_CONNECT_ISSUER_ID,
     keyId: parsed.data.APP_STORE_CONNECT_KEY_ID,
     privateKey: rawKey ?? decodePrivateKeyBase64(base64Key ?? ""),
+  };
+}
+
+export function getAppStoreAnalyticsConfig(): AppStoreConnectConfig {
+  const configured = [
+    process.env.APPLE_ANALYTICS_KEY_TYPE,
+    process.env.APPLE_ANALYTICS_ISSUER_ID,
+    process.env.APPLE_ANALYTICS_KEY_ID,
+    process.env.APPLE_ANALYTICS_PRIVATE_KEY,
+    process.env.APPLE_ANALYTICS_PRIVATE_KEY_BASE64,
+  ].some((value) => value?.trim());
+  if (!configured) {
+    return getAppStoreConnectConfig();
+  }
+
+  const schema = z.object({
+    APPLE_ANALYTICS_KEY_TYPE: z.enum(["team", "individual"]).default("team"),
+    APPLE_ANALYTICS_ISSUER_ID: z
+      .string()
+      .regex(
+        /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+      )
+      .optional(),
+    APPLE_ANALYTICS_KEY_ID: z
+      .string()
+      .min(3)
+      .max(64)
+      .regex(/^[A-Za-z0-9]+$/),
+    APPLE_ANALYTICS_PRIVATE_KEY: z.string().min(100).max(20_000).optional(),
+    APPLE_ANALYTICS_PRIVATE_KEY_BASE64: z
+      .string()
+      .min(100)
+      .max(20_000)
+      .optional(),
+  });
+  const parsed = schema.safeParse(process.env);
+  if (!parsed.success) {
+    throw new Error(
+      `App Store analytics configuration is invalid: ${parsed.error.issues
+        .map((issue) => issue.path.join("."))
+        .join(", ")}`,
+    );
+  }
+  const rawKey = parsed.data.APPLE_ANALYTICS_PRIVATE_KEY;
+  const base64Key = parsed.data.APPLE_ANALYTICS_PRIVATE_KEY_BASE64;
+  if ((rawKey ? 1 : 0) + (base64Key ? 1 : 0) !== 1) {
+    throw new Error(
+      "App Store analytics configuration is invalid: set exactly one private-key variable",
+    );
+  }
+  if (
+    parsed.data.APPLE_ANALYTICS_KEY_TYPE === "team" &&
+    !parsed.data.APPLE_ANALYTICS_ISSUER_ID
+  ) {
+    throw new Error(
+      "App Store analytics configuration is invalid: team keys require APPLE_ANALYTICS_ISSUER_ID",
+    );
+  }
+  return {
+    keyType: parsed.data.APPLE_ANALYTICS_KEY_TYPE,
+    issuerId: parsed.data.APPLE_ANALYTICS_ISSUER_ID,
+    keyId: parsed.data.APPLE_ANALYTICS_KEY_ID,
+    privateKey:
+      rawKey ??
+      decodePrivateKeyBase64(
+        base64Key ?? "",
+        "APPLE_ANALYTICS_PRIVATE_KEY_BASE64",
+      ),
   };
 }
