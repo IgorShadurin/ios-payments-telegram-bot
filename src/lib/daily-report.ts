@@ -10,7 +10,7 @@ const CARD_HEIGHT = 174;
 const CARD_GAP = 16;
 const HEADER_HEIGHT = 370;
 const CONTINUATION_HEADER_HEIGHT = 150;
-const FOOTER_HEIGHT = 104;
+const FOOTER_HEIGHT = 142;
 const SIDE = 64;
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
 export const DAILY_REPORT_APPS_PER_PAGE = 10;
@@ -24,11 +24,46 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
-function truncate(value: string, maximum: number): string {
-  const characters = [...value.trim()];
-  return characters.length <= maximum
-    ? characters.join("")
-    : `${characters.slice(0, maximum - 1).join("")}…`;
+function estimatedTextWidth(value: string): number {
+  return [...value].reduce((width, character) => {
+    if (character === " ") return width + 7;
+    if (/[ilI1.,:;'|]/.test(character)) return width + 8;
+    if (/[MW@%&]/.test(character)) return width + 23;
+    if (/[A-Z0-9]/.test(character)) return width + 17;
+    return width + 14;
+  }, 0);
+}
+
+function fitLine(value: string, maximumWidth: number): string {
+  if (estimatedTextWidth(value) <= maximumWidth) return value;
+  const characters = [...value];
+  while (
+    characters.length > 1 &&
+    estimatedTextWidth(`${characters.join("")}…`) > maximumWidth
+  ) {
+    characters.pop();
+  }
+  return `${characters.join("").trimEnd()}…`;
+}
+
+function wrapAppName(value: string, maximumWidth = 330): string[] {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return ["Untitled app"];
+  const lines: string[] = [];
+  for (const word of words) {
+    const candidate = lines.length === 0 ? word : `${lines.at(-1)} ${word}`;
+    if (lines.length === 0 || estimatedTextWidth(candidate) <= maximumWidth) {
+      if (lines.length === 0) lines.push(candidate);
+      else lines[lines.length - 1] = candidate;
+      continue;
+    }
+    if (lines.length === 1) {
+      lines.push(word);
+      continue;
+    }
+    lines[1] = `${lines[1]} ${word}`;
+  }
+  return lines.slice(0, 2).map((line) => fitLine(line, maximumWidth));
 }
 
 function formatInteger(value: number | undefined): string {
@@ -175,19 +210,36 @@ function appCard(
   y: number,
   embeddedIcon?: string,
 ): string {
+  const nameLines = wrapAppName(app.name);
+  const hasWrappedName = nameLines.length > 1;
+  const nameY = y + (hasWrappedName ? 52 : 67);
+  const bundleY = y + (hasWrappedName ? 116 : 101);
+  const storeIdY = y + (hasWrappedName ? 145 : 132);
+  const name = nameLines
+    .map(
+      (line, index) =>
+        `<tspan x="240" dy="${index === 0 ? 0 : 29}">${escapeXml(line)}</tspan>`,
+    )
+    .join("");
+  const bundle = fitLine(app.bundleId, 330);
   const icon = embeddedIcon
     ? `<image x="100" y="${y + 31}" width="112" height="112" href="${embeddedIcon}" preserveAspectRatio="xMidYMid slice" clip-path="url(#iconClip${rank})"/>`
     : `<rect x="100" y="${y + 31}" width="112" height="112" rx="25" fill="url(#fallbackGradient)"/><text x="156" y="${y + 102}" text-anchor="middle" class="fallbackLetter">${escapeXml(app.name.slice(0, 1).toUpperCase())}</text>`;
   return `
     <g>
       <rect x="${SIDE}" y="${y}" width="${WIDTH - SIDE * 2}" height="${CARD_HEIGHT}" rx="28" fill="#FFFFFF" stroke="#E9EDF3"/>
-      <defs><clipPath id="iconClip${rank}"><rect x="100" y="${y + 31}" width="112" height="112" rx="25"/></clipPath></defs>
+      <defs>
+        <clipPath id="iconClip${rank}"><rect x="100" y="${y + 31}" width="112" height="112" rx="25"/></clipPath>
+        <clipPath id="textClip${rank}"><rect x="236" y="${y + 26}" width="343" height="128"/></clipPath>
+      </defs>
       <rect x="78" y="${y + 18}" width="34" height="34" rx="17" fill="#121826"/>
       <text x="95" y="${y + 41}" text-anchor="middle" class="rank">${rank}</text>
       ${icon}
-      <text x="240" y="${y + 67}" class="appName">${escapeXml(truncate(app.name, 31))}</text>
-      <text x="240" y="${y + 98}" class="bundle">${escapeXml(truncate(app.bundleId, 38))}</text>
-      <text x="240" y="${y + 130}" class="storeId">APP STORE ID ${app.appAppleId}</text>
+      <g clip-path="url(#textClip${rank})">
+        <text x="240" y="${nameY}" class="appName">${name}</text>
+        <text x="240" y="${bundleY}" class="bundle">${escapeXml(bundle)}</text>
+        <text x="240" y="${storeIdY}" class="storeId">APP STORE ID ${app.appAppleId}</text>
+      </g>
       <line x1="595" y1="${y + 37}" x2="595" y2="${y + 137}" stroke="#E9EDF3"/>
       <text x="670" y="${y + 61}" class="metricLabel">PAGE VIEWS</text>
       ${pendingDot(app.productPageViews, 649, y + 56)}
@@ -234,6 +286,12 @@ export async function renderDailyReportPng(
   const availableProceeds = apps.filter(
     (app) => app.proceedsUsd !== undefined,
   ).length;
+  const totalViewsLabel =
+    availableViews === 0 ? "—" : formatInteger(totalViews);
+  const totalDownloadsLabel =
+    availableDownloads === 0 ? "—" : formatInteger(totalDownloads);
+  const totalProceedsLabel =
+    availableProceeds === 0 ? "—" : formatUsd(totalProceeds);
   const iconByAppleId = new Map(
     apps.map((app, index) => [app.appAppleId, iconUrls[index]]),
   );
@@ -271,15 +329,15 @@ export async function renderDailyReportPng(
     <text x="96" y="198" class="date">${escapeXml(formatReportDate(report.reportDate))} · ${apps.length} public apps</text>
     <rect x="96" y="225" width="326" height="80" rx="20" fill="#FFFFFF" fill-opacity="0.07"/>
     <text x="119" y="251" class="summaryLabel">PRODUCT PAGE VIEWS</text>
-    <text x="119" y="289" class="summaryValue">${formatInteger(totalViews)}</text>
+    <text x="119" y="289" class="summaryValue">${totalViewsLabel}</text>
     <text x="338" y="288" class="coverage">${availableViews}/${apps.length} ready</text>
     <rect x="440" y="225" width="326" height="80" rx="20" fill="#FFFFFF" fill-opacity="0.07"/>
     <text x="463" y="251" class="summaryLabel">DOWNLOADS</text>
-    <text x="463" y="289" class="summaryValue">${formatInteger(totalDownloads)}</text>
+    <text x="463" y="289" class="summaryValue">${totalDownloadsLabel}</text>
     <text x="682" y="288" class="coverage">${availableDownloads}/${apps.length} ready</text>
     <rect x="784" y="225" width="326" height="80" rx="20" fill="#10B981" fill-opacity="0.15"/>
     <text x="807" y="251" class="summaryLabel" style="fill:#A7F3D0">EARNINGS · PROCEEDS</text>
-    <text x="807" y="289" class="summaryValue">${formatUsd(totalProceeds)}</text>
+    <text x="807" y="289" class="summaryValue">${totalProceedsLabel}</text>
     <text x="1026" y="288" class="coverage">${availableProceeds}/${apps.length} ready</text>`
       : `
     <text x="${SIDE}" y="79" class="continuationDate">${escapeXml(formatReportDate(report.reportDate))}</text>
@@ -302,7 +360,7 @@ export async function renderDailyReportPng(
         .coverage { font-size: 14px; font-weight: 600; fill: #94A3B8; }
         .rank { font-size: 16px; font-weight: 800; fill: #FFFFFF; }
         .fallbackLetter { font-size: 47px; font-weight: 800; fill: #FFFFFF; }
-        .appName { font-size: 25px; font-weight: 730; fill: #172033; }
+        .appName { font-size: 24px; font-weight: 730; fill: #172033; }
         .bundle { font-size: 16px; font-weight: 500; fill: #64748B; }
         .storeId { font-size: 13px; font-weight: 700; letter-spacing: 1.1px; fill: #94A3B8; }
         .metricLabel, .earningsLabel { font-size: 14px; font-weight: 750; letter-spacing: 1.1px; fill: #64748B; }
@@ -316,9 +374,10 @@ export async function renderDailyReportPng(
     <rect width="${WIDTH}" height="${height}" fill="url(#background)"/>
     ${header}
     ${cards}
-    <circle cx="80" cy="${height - 64}" r="5" fill="#F59E0B"/>
-    <text x="96" y="${height - 58}" class="footer">Orange dots mean Apple has not published that metric yet. Previous-day analytics are provisional: downloads and proceeds settle within 2 days; views within 3 days.</text>
-    <text x="96" y="${height - 31}" class="footer">Sorted by earnings, then product page views · Earnings are Apple estimated proceeds in USD · Generated ${escapeXml(report.generatedAt)}</text>
+    <circle cx="80" cy="${height - 94}" r="5" fill="#F59E0B"/>
+    <text x="96" y="${height - 89}" class="footer">Orange dots mean Apple has not published that metric yet.</text>
+    <text x="96" y="${height - 60}" class="footer">Previous-day analytics are provisional: downloads and proceeds settle within 2 days; product page views within 3 days.</text>
+    <text x="96" y="${height - 29}" class="footer">Sorted by earnings, then product page views · Earnings are estimated proceeds in USD · Generated ${escapeXml(report.generatedAt)}</text>
   </svg>`;
 
     await sharp(Buffer.from(svg))
