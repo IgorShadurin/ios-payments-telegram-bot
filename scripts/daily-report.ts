@@ -7,7 +7,11 @@ import {
   fetchPublicAppMetadata,
 } from "../src/lib/app-store-analytics";
 import { createAppStoreConnectToken } from "../src/lib/app-store-connect";
-import { getAppStoreAnalyticsConfig, getDatabasePath } from "../src/lib/config";
+import {
+  getAppStoreAnalyticsConfig,
+  getAppStoreAnalyticsSetupConfig,
+  getDatabasePath,
+} from "../src/lib/config";
 import {
   DAILY_REPORT_TIME_ZONE,
   previousCalendarDate,
@@ -141,22 +145,30 @@ function outputPathForDate(reportDate: string): string {
 
 async function collectApp(
   client: AppStoreAnalyticsClient,
+  getSetupClient: () => AppStoreAnalyticsClient,
   app: RegisteredApp,
   reportDate: string,
 ): Promise<DailyAppMetrics> {
-  const request = await client.findOngoingReportRequest(app.appAppleId);
-  if (!request) {
-    throw new Error(
-      `${app.bundleId}: no ongoing analytics request; run analytics:setup first`,
+  const metadata = await fetchPublicAppMetadata(app);
+  const request = await client.ensureOngoingReportRequest(
+    app.appAppleId,
+    getSetupClient,
+  );
+  if (request.created) {
+    console.log(
+      `${app.bundleId}: ongoing analytics requested; metrics pending from Apple`,
     );
-  }
-  if (request.stopped) {
-    throw new Error(
-      `${app.bundleId}: Apple's analytics request stopped due to inactivity; run analytics:setup again`,
-    );
+    return {
+      appAppleId: app.appAppleId,
+      name: metadata.name,
+      bundleId: app.bundleId,
+      iconUrl: metadata.iconUrl,
+      viewsAvailability: "pending",
+      downloadsAvailability: "pending",
+      proceedsAvailability: "pending",
+    };
   }
   const reports = await client.listRequiredReports(request.id);
-  const metadata = await fetchPublicAppMetadata(app);
   const values: Partial<Record<AnalyticsMetric, number>> = {};
   for (const metric of ["views", "downloads", "proceeds"] as const) {
     const report = reports[metric];
@@ -277,9 +289,16 @@ async function main(): Promise<void> {
       const client = new AppStoreAnalyticsClient(
         createAppStoreConnectToken(getAppStoreAnalyticsConfig()),
       );
+      let setupClient: AppStoreAnalyticsClient | undefined;
+      const getSetupClient = (): AppStoreAnalyticsClient => {
+        setupClient ??= new AppStoreAnalyticsClient(
+          createAppStoreConnectToken(getAppStoreAnalyticsSetupConfig()),
+        );
+        return setupClient;
+      };
       const metrics: DailyAppMetrics[] = [];
       for (const app of apps) {
-        metrics.push(await collectApp(client, app, reportDate));
+        metrics.push(await collectApp(client, getSetupClient, app, reportDate));
         console.log(`${app.bundleId}: analytics collected`);
       }
       const report: DailyPortfolioReport = {

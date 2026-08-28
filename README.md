@@ -133,10 +133,13 @@ For durable production recovery, keep a separate Admin key named
 `DO NOT DELETE - Analytics Setup` in App Store Connect and configure it with
 `APPLE_ANALYTICS_SETUP_KEY_TYPE`, `APPLE_ANALYTICS_SETUP_ISSUER_ID`,
 `APPLE_ANALYTICS_SETUP_KEY_ID`, and
-`APPLE_ANALYTICS_SETUP_PRIVATE_KEY_BASE64`. Only `analytics:setup` reads these
-variables; the scheduled daily worker never receives Admin authority. Apple
-does not provide an undeletable-key flag, so the explicit name is the deletion
-warning.
+`APPLE_ANALYTICS_SETUP_PRIVATE_KEY_BASE64`. The daily worker reads this Admin
+credential only when it detects that a newly registered app has no active
+ongoing request, or Apple stopped one for inactivity. It creates the request,
+marks that app's metrics pending while Apple prepares the first reports, and
+continues the portfolio delivery. Routine report reads still use the Sales and
+Reports credential. Apple does not provide an undeletable-key flag, so the
+explicit name is the deletion warning.
 
 The first successful poll for each app creates a silent baseline from its most
 recent reviews. It does not send old reviews. Later polls store and enqueue only

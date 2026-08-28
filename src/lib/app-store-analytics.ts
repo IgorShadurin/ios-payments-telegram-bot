@@ -406,6 +406,20 @@ export class AppStoreAnalyticsClient {
     return parsed.data.id;
   }
 
+  async ensureOngoingReportRequest(
+    appAppleId: number,
+    getSetupClient: () => AppStoreAnalyticsClient,
+  ): Promise<{ id: string; created: boolean }> {
+    const current = await this.findOngoingReportRequest(appAppleId);
+    if (current && !current.stopped) {
+      return { id: current.id, created: false };
+    }
+    return {
+      id: await getSetupClient().createOngoingReportRequest(appAppleId),
+      created: true,
+    };
+  }
+
   async listRequiredReports(
     reportRequestId: string,
   ): Promise<Partial<Record<AnalyticsMetric, AnalyticsReportSummary>>> {

@@ -118,4 +118,59 @@ describe("App Store analytics", () => {
       },
     });
   });
+
+  it("creates a missing ongoing request through the Admin setup client", async () => {
+    const readFetch = vi.fn(async () => Response.json({ data: [], links: {} }));
+    const setupFetch = vi.fn(async () =>
+      Response.json({
+        data: {
+          type: "analyticsReportRequests",
+          id: "request-created",
+          attributes: { accessType: "ONGOING" },
+        },
+      }),
+    );
+    const readClient = new AppStoreAnalyticsClient("sales-key", {
+      fetchImplementation: readFetch as unknown as typeof fetch,
+    });
+    const setupClient = new AppStoreAnalyticsClient("admin-key", {
+      fetchImplementation: setupFetch as unknown as typeof fetch,
+    });
+
+    await expect(
+      readClient.ensureOngoingReportRequest(987654321, () => setupClient),
+    ).resolves.toEqual({ id: "request-created", created: true });
+    expect(readFetch).toHaveBeenCalledTimes(1);
+    expect(setupFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not use the Admin setup client when analytics already exists", async () => {
+    const readFetch = vi.fn(async () =>
+      Response.json({
+        data: [
+          {
+            type: "analyticsReportRequests",
+            id: "request-existing",
+            attributes: {
+              accessType: "ONGOING",
+              stoppedDueToInactivity: false,
+            },
+          },
+        ],
+        links: {},
+      }),
+    );
+    const setupFetch = vi.fn();
+    const readClient = new AppStoreAnalyticsClient("sales-key", {
+      fetchImplementation: readFetch as unknown as typeof fetch,
+    });
+    const setupClient = new AppStoreAnalyticsClient("admin-key", {
+      fetchImplementation: setupFetch as unknown as typeof fetch,
+    });
+
+    await expect(
+      readClient.ensureOngoingReportRequest(987654321, () => setupClient),
+    ).resolves.toEqual({ id: "request-existing", created: false });
+    expect(setupFetch).not.toHaveBeenCalled();
+  });
 });
