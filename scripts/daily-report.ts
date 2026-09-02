@@ -140,6 +140,13 @@ type CollectedDailyAppMetrics = DailyAppMetrics & {
   inferZeroWhenPortfolioPublished: Partial<Record<AnalyticsMetric, boolean>>;
 };
 
+class AppleAnalyticsPendingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AppleAnalyticsPendingError";
+  }
+}
+
 function outputPathForDate(reportDate: string): string {
   const configured = process.env.DAILY_REPORT_OUTPUT_DIR?.trim();
   const directory =
@@ -355,7 +362,6 @@ async function main(): Promise<void> {
       const metrics: CollectedDailyAppMetrics[] = [];
       for (const app of apps) {
         metrics.push(await collectApp(client, getSetupClient, app, reportDate));
-        console.log(`${app.bundleId}: analytics collected`);
       }
       inferZeroActivityAfterPortfolioPublication(metrics);
       const report: DailyPortfolioReport = {
@@ -372,7 +378,7 @@ async function main(): Promise<void> {
         .filter(([, pending]) => pending)
         .map(([metric]) => metric);
       if (entirelyPendingMetrics.length > 0) {
-        throw new Error(
+        throw new AppleAnalyticsPendingError(
           `Apple has not published ${entirelyPendingMetrics.join(
             ", ",
           )} for ${reportDate}; retrying later`,
@@ -411,6 +417,16 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  if (error instanceof AppleAnalyticsPendingError) {
+    console.log(
+      JSON.stringify({
+        deferred: true,
+        reason: "apple_data_pending",
+        message: error.message,
+      }),
+    );
+    return;
+  }
   console.error(error instanceof Error ? error.message : "Daily report failed");
   process.exitCode = 1;
 });

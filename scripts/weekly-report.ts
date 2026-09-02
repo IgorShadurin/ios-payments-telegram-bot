@@ -33,6 +33,13 @@ type CollectedWeeklyAppMetrics = DailyAppMetrics & {
   inferZeroWhenPortfolioPublished: Partial<Record<AnalyticsMetric, boolean>>;
 };
 
+class AppleAnalyticsPendingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AppleAnalyticsPendingError";
+  }
+}
+
 function addUtcCalendarDays(date: string, days: number): string {
   const value = new Date(`${date}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
@@ -244,7 +251,6 @@ async function main(): Promise<void> {
         metrics.push(
           await collectApp(client, getSetupClient, app, startDate, endDate),
         );
-        console.log(`${app.bundleId}: weekly analytics collected`);
       }
       inferZeroActivityAfterPortfolioPublication(metrics);
       const pendingMetrics = metrics.reduce(
@@ -256,7 +262,7 @@ async function main(): Promise<void> {
         0,
       );
       if (pendingMetrics > 0) {
-        throw new Error(
+        throw new AppleAnalyticsPendingError(
           `Apple has not published all weekly metrics for ${startDate} through ${endDate}; retrying later`,
         );
       }
@@ -313,6 +319,16 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  if (error instanceof AppleAnalyticsPendingError) {
+    console.log(
+      JSON.stringify({
+        deferred: true,
+        reason: "apple_data_pending",
+        message: error.message,
+      }),
+    );
+    return;
+  }
   console.error(
     error instanceof Error ? error.message : "Weekly report failed",
   );
