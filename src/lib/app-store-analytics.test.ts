@@ -12,13 +12,19 @@ describe("App Store analytics", () => {
     expect(ANALYTICS_REPORT_NAMES.downloads).toBe("App Downloads Standard");
   });
 
-  it("aggregates product-page views, downloads excluding updates, and proceeds", () => {
-    const views = [
+  it("aggregates App Store Connect impressions, downloads excluding updates, and proceeds", () => {
+    const impressions = [
+      {
+        Date: "2026-08-25",
+        Event: "Impression",
+        "Page Type": "No page",
+        Counts: "133",
+      },
       {
         Date: "2026-08-25",
         Event: "Page view",
         "Page Type": "Product page",
-        Counts: "12",
+        Counts: "9",
       },
       {
         Date: "2026-08-25",
@@ -52,7 +58,9 @@ describe("App Store analytics", () => {
       { Date: "2026-08-25", "Proceeds in USD": "-2.00" },
     ];
 
-    expect(aggregateMetricRows("views", views, "2026-08-25")).toBe(12);
+    expect(aggregateMetricRows("impressions", impressions, "2026-08-25")).toBe(
+      142,
+    );
     expect(aggregateMetricRows("downloads", downloads, "2026-08-25")).toBe(10);
     expect(aggregateMetricRows("proceeds", proceeds, "2026-08-25")).toBe(10.5);
   });
@@ -233,7 +241,7 @@ describe("App Store analytics", () => {
     });
 
     await expect(
-      client.readMetric("views-report", "views", "2026-08-25"),
+      client.readMetric("impressions-report", "impressions", "2026-08-25"),
     ).resolves.toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

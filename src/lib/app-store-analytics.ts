@@ -99,13 +99,13 @@ const lookupSchema = z.object({
 });
 
 export const ANALYTICS_REPORT_NAMES = {
-  views: "App Store Discovery and Engagement Standard",
+  impressions: "App Store Discovery and Engagement Standard",
   downloads: "App Downloads Standard",
   proceeds: "App Store Purchases Standard",
 } as const;
 
 export const ANALYTICS_COMPLETENESS_DAYS = {
-  views: 3,
+  impressions: 3,
   downloads: 2,
   proceeds: 2,
 } as const satisfies Record<AnalyticsMetric, number>;
@@ -244,11 +244,12 @@ export function aggregateMetricRows(
   reportDate: string,
 ): number {
   const forDate = rows.filter((row) => row.Date === reportDate);
-  if (metric === "views") {
+  if (metric === "impressions") {
     return forDate
       .filter(
         (row) =>
-          row.Event === "Page view" && row["Page Type"] === "Product page",
+          row.Event === "Impression" ||
+          (row.Event === "Page view" && row["Page Type"] === "Product page"),
       )
       .reduce((sum, row) => sum + numberField(row, "Counts"), 0);
   }

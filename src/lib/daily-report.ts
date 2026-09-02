@@ -154,11 +154,11 @@ export function sortDailyAppMetrics(
     if (revenue !== 0) {
       return revenue;
     }
-    const views =
-      (right.productPageViews ?? Number.NEGATIVE_INFINITY) -
-      (left.productPageViews ?? Number.NEGATIVE_INFINITY);
-    if (views !== 0) {
-      return views;
+    const impressions =
+      (right.impressions ?? Number.NEGATIVE_INFINITY) -
+      (left.impressions ?? Number.NEGATIVE_INFINITY);
+    if (impressions !== 0) {
+      return impressions;
     }
     return left.name.localeCompare(right.name);
   });
@@ -275,9 +275,9 @@ function appCard(
         <text x="240" y="${storeIdY}" class="storeId">APP STORE ID ${app.appAppleId}</text>
       </g>
       <line x1="595" y1="${y + 37}" x2="595" y2="${y + 137}" stroke="#E9EDF3"/>
-      <text x="670" y="${y + 61}" class="metricLabel">PAGE VIEWS</text>
-      ${pendingDot(app.productPageViews, 649, y + 56)}
-      <text x="649" y="${y + 111}" class="metricValue">${formatInteger(app.productPageViews)}</text>
+      <text x="670" y="${y + 61}" class="metricLabel">IMPRESSIONS</text>
+      ${pendingDot(app.impressions, 649, y + 56)}
+      <text x="649" y="${y + 111}" class="metricValue">${formatInteger(app.impressions)}</text>
       <text x="850" y="${y + 61}" class="metricLabel">DOWNLOADS</text>
       ${pendingDot(app.downloads, 829, y + 56)}
       <text x="829" y="${y + 111}" class="metricValue">${formatInteger(app.downloads)}</text>
@@ -299,8 +299,8 @@ export async function renderDailyReportPng(
   const iconUrls = await Promise.all(
     apps.map((app) => iconDataUrl(app.iconUrl, fetchImplementation)),
   );
-  const totalViews = apps.reduce(
-    (sum, app) => sum + (app.productPageViews ?? 0),
+  const totalImpressions = apps.reduce(
+    (sum, app) => sum + (app.impressions ?? 0),
     0,
   );
   const totalDownloads = apps.reduce(
@@ -311,8 +311,8 @@ export async function renderDailyReportPng(
     (sum, app) => sum + (app.proceedsUsd ?? 0),
     0,
   );
-  const availableViews = apps.filter(
-    (app) => app.productPageViews !== undefined,
+  const availableImpressions = apps.filter(
+    (app) => app.impressions !== undefined,
   ).length;
   const availableDownloads = apps.filter(
     (app) => app.downloads !== undefined,
@@ -320,8 +320,8 @@ export async function renderDailyReportPng(
   const availableProceeds = apps.filter(
     (app) => app.proceedsUsd !== undefined,
   ).length;
-  const totalViewsLabel =
-    availableViews === 0 ? "—" : formatInteger(totalViews);
+  const totalImpressionsLabel =
+    availableImpressions === 0 ? "—" : formatInteger(totalImpressions);
   const totalDownloadsLabel =
     availableDownloads === 0 ? "—" : formatInteger(totalDownloads);
   const totalProceedsLabel =
@@ -362,9 +362,9 @@ export async function renderDailyReportPng(
     <text x="96" y="159" class="title">App portfolio report</text>
     <text x="96" y="198" class="date">REPORT DATE · ${escapeXml(formatReportDate(report.reportDate))} · ${apps.length} public apps</text>
     <rect x="96" y="225" width="326" height="80" rx="20" fill="#FFFFFF" fill-opacity="0.07"/>
-    <text x="119" y="251" class="summaryLabel">PRODUCT PAGE VIEWS</text>
-    <text x="119" y="289" class="summaryValue">${totalViewsLabel}</text>
-    <text x="398" y="288" text-anchor="end" class="coverage">${availableViews}/${apps.length} ready</text>
+    <text x="119" y="251" class="summaryLabel">IMPRESSIONS</text>
+    <text x="119" y="289" class="summaryValue">${totalImpressionsLabel}</text>
+    <text x="398" y="288" text-anchor="end" class="coverage">${availableImpressions}/${apps.length} ready</text>
     <rect x="440" y="225" width="326" height="80" rx="20" fill="#FFFFFF" fill-opacity="0.07"/>
     <text x="463" y="251" class="summaryLabel">DOWNLOADS</text>
     <text x="463" y="289" class="summaryValue">${totalDownloadsLabel}</text>
@@ -410,8 +410,8 @@ export async function renderDailyReportPng(
     ${cards}
     <circle cx="80" cy="${height - 94}" r="5" fill="#F59E0B"/>
     <text x="96" y="${height - 89}" class="footer">Orange dots mean Apple has not published that metric yet.</text>
-    <text x="96" y="${height - 60}" class="footer">Uses Apple&apos;s complete daily partitions: downloads and proceeds at D+2; product page views at D+3.</text>
-    <text x="96" y="${height - 29}" class="footer">Sorted by earnings, then product page views · Earnings are estimated proceeds in USD · Generated ${escapeXml(report.generatedAt)}</text>
+    <text x="96" y="${height - 60}" class="footer">Uses Apple&apos;s complete daily partitions: downloads and proceeds at D+2; impressions at D+3.</text>
+    <text x="96" y="${height - 29}" class="footer">Sorted by earnings, then impressions · Earnings are estimated proceeds in USD · Generated ${escapeXml(report.generatedAt)}</text>
   </svg>`;
 
     await sharp(Buffer.from(svg))
@@ -429,7 +429,7 @@ export async function renderDailyReportPng(
         appCount: apps.length,
         appsPerPage: DAILY_REPORT_APPS_PER_PAGE,
         pageCount: pages.length,
-        sort: ["proceedsUsd:desc", "productPageViews:desc"],
+        sort: ["proceedsUsd:desc", "impressions:desc"],
         pages: outputPaths.map((pagePath, index) => ({
           page: index + 1,
           file: path.basename(pagePath),

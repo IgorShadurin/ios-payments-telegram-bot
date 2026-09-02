@@ -142,10 +142,10 @@ export interface DailyAppMetrics {
   name: string;
   bundleId: string;
   iconUrl?: string;
-  productPageViews?: number;
+  impressions?: number;
   downloads?: number;
   proceedsUsd?: number;
-  viewsAvailability: DailyMetricAvailability;
+  impressionsAvailability: DailyMetricAvailability;
   downloadsAvailability: DailyMetricAvailability;
   proceedsAvailability: DailyMetricAvailability;
 }

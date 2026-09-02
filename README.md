@@ -60,14 +60,16 @@ complete Apple analytics day and sends them to the configured Telegram chat as
 one album. At the 19:00 Minsk run this is four calendar days earlier, which
 ensures Apple's `D+3` engagement partition has already been published. It
 retrieves and totals every enabled registered app before rendering, sorts the
-full portfolio by estimated proceeds and then product-page views, and places at
+full portfolio by estimated proceeds and then impressions, and places at
 most 10 apps on each page. The portfolio summary appears only on page 1; global
 rank and a `Page N of M` label continue across every page.
 
 The metrics come from Apple's official Analytics Reports API:
 
-- **Product page views** are `Page view` events for `Product page` rows in the
-  App Store Discovery and Engagement Standard report.
+- **Impressions** match App Store Connect Analytics by combining `Impression`
+  events with `Page view` events whose page type is `Product page` from the App
+  Store Discovery and Engagement Standard report. Apple's raw `Impression`
+  event excludes product-page views, while the dashboard metric includes them.
 - **Downloads** are first-time downloads and redownloads from the App Store
   Downloads Standard report; updates are intentionally excluded.
 - **Earnings** are Apple's estimated `Proceeds in USD` from the App Store

@@ -25,16 +25,17 @@ afterEach(() => {
 function app(
   name: string,
   proceedsUsd: number | undefined,
-  productPageViews: number | undefined,
+  impressions: number | undefined,
 ): DailyAppMetrics {
   return {
     appAppleId: Math.floor(Math.random() * 1_000_000_000) + 1,
     name,
     bundleId: `com.example.${name.toLowerCase()}`,
     proceedsUsd,
-    productPageViews,
+    impressions,
     downloads: 1,
-    viewsAvailability: productPageViews === undefined ? "pending" : "available",
+    impressionsAvailability:
+      impressions === undefined ? "pending" : "available",
     downloadsAvailability: "available",
     proceedsAvailability: proceedsUsd === undefined ? "pending" : "available",
   };
@@ -75,7 +76,7 @@ describe("daily report", () => {
     ).toBe(false);
   });
 
-  it("sorts by revenue, then by product-page views, with pending values last", () => {
+  it("sorts by revenue, then by impressions, with pending values last", () => {
     const sorted = sortDailyAppMetrics([
       app("Pending", undefined, 999),
       app("Views", 3, 40),

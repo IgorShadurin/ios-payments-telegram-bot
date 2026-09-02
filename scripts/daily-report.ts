@@ -38,10 +38,10 @@ const sampleApps: DailyAppMetrics[] = [
     bundleId: "com.shadurin.yumcut",
     iconUrl:
       "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8e/5e/78/8e5e78a2-5196-45f8-bab9-35da59799b7a/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
-    productPageViews: 311,
+    impressions: 311,
     downloads: 38,
     proceedsUsd: 54.72,
-    viewsAvailability: "available",
+    impressionsAvailability: "available",
     downloadsAvailability: "available",
     proceedsAvailability: "available",
   },
@@ -51,10 +51,10 @@ const sampleApps: DailyAppMetrics[] = [
     bundleId: "com.shadurin.videocompressor",
     iconUrl:
       "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/f8/33/b4/f833b43f-d66a-4d8f-d77e-eb22f7b50fcd/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
-    productPageViews: 684,
+    impressions: 684,
     downloads: 91,
     proceedsUsd: 21.45,
-    viewsAvailability: "available",
+    impressionsAvailability: "available",
     downloadsAvailability: "available",
     proceedsAvailability: "available",
   },
@@ -64,10 +64,10 @@ const sampleApps: DailyAppMetrics[] = [
     bundleId: "com.shadurin.textbrush",
     iconUrl:
       "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/fa/fb/63/fafb632e-6ef9-72c5-7f2c-d35344ffb636/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
-    productPageViews: 516,
+    impressions: 516,
     downloads: 67,
     proceedsUsd: 14.98,
-    viewsAvailability: "available",
+    impressionsAvailability: "available",
     downloadsAvailability: "available",
     proceedsAvailability: "available",
   },
@@ -77,10 +77,10 @@ const sampleApps: DailyAppMetrics[] = [
     bundleId: "com.shadurin.audioconverter",
     iconUrl:
       "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/08/30/0e/08300e9c-bfd3-16b0-8fe1-106f57d5914d/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
-    productPageViews: 238,
+    impressions: 238,
     downloads: 29,
     proceedsUsd: 9.96,
-    viewsAvailability: "available",
+    impressionsAvailability: "available",
     downloadsAvailability: "available",
     proceedsAvailability: "available",
   },
@@ -90,10 +90,10 @@ const sampleApps: DailyAppMetrics[] = [
     bundleId: "com.shadurin.audiofade",
     iconUrl:
       "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/cd/23/d9/cd23d907-b30d-b964-468c-296a5bf96f7b/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
-    productPageViews: 196,
+    impressions: 196,
     downloads: 23,
     proceedsUsd: 4.99,
-    viewsAvailability: "available",
+    impressionsAvailability: "available",
     downloadsAvailability: "available",
     proceedsAvailability: "available",
   },
@@ -103,10 +103,10 @@ const sampleApps: DailyAppMetrics[] = [
     bundleId: "com.shadurin.jelly",
     iconUrl:
       "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/b4/39/9a/b4399a2d-425d-83ef-5ec4-464d6c0e5783/AppIcon-0-0-1x_U007ephone-0-1-85-220.png/512x512bb.jpg",
-    productPageViews: 143,
+    impressions: 143,
     downloads: 17,
     proceedsUsd: 0,
-    viewsAvailability: "available",
+    impressionsAvailability: "available",
     downloadsAvailability: "available",
     proceedsAvailability: "available",
   },
@@ -116,10 +116,10 @@ const sampleApps: DailyAppMetrics[] = [
     bundleId: "com.lohinov.videocollage",
     iconUrl:
       "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/07/32/c2/0732c2ce-b310-e734-88aa-c95227bd8ffb/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
-    productPageViews: 81,
+    impressions: 81,
     downloads: 9,
     proceedsUsd: 0,
-    viewsAvailability: "available",
+    impressionsAvailability: "available",
     downloadsAvailability: "available",
     proceedsAvailability: "available",
   },
@@ -131,7 +131,7 @@ const sampleApps: DailyAppMetrics[] = [
       "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/68/23/b5/6823b5f5-a373-2f01-6881-a1d1ddee62be/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
     downloads: 6,
     proceedsUsd: 0,
-    viewsAvailability: "pending",
+    impressionsAvailability: "pending",
     downloadsAvailability: "available",
     proceedsAvailability: "available",
   },
@@ -164,14 +164,14 @@ async function collectApp(
       name: metadata.name,
       bundleId: app.bundleId,
       iconUrl: metadata.iconUrl,
-      viewsAvailability: "pending",
+      impressionsAvailability: "pending",
       downloadsAvailability: "pending",
       proceedsAvailability: "pending",
     };
   }
   const reports = await client.listRequiredReports(request.id);
   const values: Partial<Record<AnalyticsMetric, number>> = {};
-  for (const metric of ["views", "downloads", "proceeds"] as const) {
+  for (const metric of ["impressions", "downloads", "proceeds"] as const) {
     const report = reports[metric];
     if (report) {
       const value = await client.readMetric(report.id, metric, reportDate);
@@ -185,10 +185,11 @@ async function collectApp(
     name: metadata.name,
     bundleId: app.bundleId,
     iconUrl: metadata.iconUrl,
-    productPageViews: values.views,
+    impressions: values.impressions,
     downloads: values.downloads,
     proceedsUsd: values.proceeds,
-    viewsAvailability: values.views === undefined ? "pending" : "available",
+    impressionsAvailability:
+      values.impressions === undefined ? "pending" : "available",
     downloadsAvailability:
       values.downloads === undefined ? "pending" : "available",
     proceedsAvailability:
@@ -202,7 +203,7 @@ function caption(report: DailyPortfolioReport): string {
   const pending = apps.reduce(
     (sum, app) =>
       sum +
-      [app.productPageViews, app.downloads, app.proceedsUsd].filter(
+      [app.impressions, app.downloads, app.proceedsUsd].filter(
         (value) => value === undefined,
       ).length,
     0,
