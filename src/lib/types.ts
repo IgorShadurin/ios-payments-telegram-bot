@@ -158,8 +158,30 @@ export interface DailyPortfolioReport {
   isSample?: boolean;
 }
 
+export interface WeeklyPortfolioReport {
+  weekStartDate: string;
+  weekEndDate: string;
+  generatedAt: string;
+  timeZone: string;
+  apps: DailyAppMetrics[];
+  isSample?: boolean;
+}
+
 export interface StoredDailyReportDelivery {
   reportDate: string;
+  deliveryStatus: "pending" | "sending" | "retry" | "delivered";
+  deliveryAttempts: number;
+  nextAttemptAt: number;
+  imagePath: string;
+  lastError?: string;
+  telegramMessageId?: number;
+  createdAt: number;
+  deliveredAt?: number;
+}
+
+export interface StoredWeeklyReportDelivery {
+  weekStartDate: string;
+  weekEndDate: string;
   deliveryStatus: "pending" | "sending" | "retry" | "delivered";
   deliveryAttempts: number;
   nextAttemptAt: number;

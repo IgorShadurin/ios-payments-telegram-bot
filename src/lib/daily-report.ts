@@ -2,7 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { escapeTelegramHtml } from "./message";
-import type { DailyAppMetrics, DailyPortfolioReport } from "./types";
+import type {
+  DailyAppMetrics,
+  DailyPortfolioReport,
+  WeeklyPortfolioReport,
+} from "./types";
 
 export const DAILY_REPORT_TIME_ZONE = "Europe/Minsk";
 export const DAILY_REPORT_LAG_DAYS = 4;
@@ -68,23 +72,48 @@ function wrapAppName(value: string, maximumWidth = 330): string[] {
   return lines.slice(0, 2).map((line) => fitLine(line, maximumWidth));
 }
 
-function formatInteger(value: number | undefined): string {
-  return value === undefined
-    ? "—"
+function formatCompactNumber(value: number): string {
+  if (Math.abs(value) < 1_000) {
+    return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
+      value,
+    );
+  }
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    compactDisplay: "short",
+    maximumFractionDigits: 1,
+  })
+    .format(value)
+    .replaceAll("K", "k")
+    .replaceAll("M", "m")
+    .replaceAll("B", "b")
+    .replaceAll("T", "t");
+}
+
+function formatInteger(value: number | undefined, compact = false): string {
+  if (value === undefined) {
+    return "—";
+  }
+  return compact
+    ? formatCompactNumber(value)
     : new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
         value,
       );
 }
 
-function formatUsd(value: number | undefined): string {
-  return value === undefined
-    ? "—"
-    : new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD",
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(value);
+function formatUsd(value: number | undefined, compact = false): string {
+  if (value === undefined) {
+    return "—";
+  }
+  if (compact && Math.abs(value) >= 1_000) {
+    return `${value < 0 ? "-" : ""}$${formatCompactNumber(Math.abs(value))}`;
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function formatReportDate(value: string): string {
@@ -95,6 +124,21 @@ function formatReportDate(value: string): string {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(`${value}T12:00:00Z`));
+}
+
+function formatReportPeriod(startDate: string, endDate: string): string {
+  const start = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${startDate}T12:00:00Z`));
+  const end = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${endDate}T12:00:00Z`));
+  return `${start} – ${end}`;
 }
 
 export function previousCalendarDate(
@@ -110,6 +154,29 @@ export function previousCalendarDate(
   const previous = new Date(`${today}T12:00:00Z`);
   previous.setUTCDate(previous.getUTCDate() - 1);
   return previous.toISOString().slice(0, 10);
+}
+
+export function previousCompletedWeek(
+  now = new Date(),
+  timeZone = DAILY_REPORT_TIME_ZONE,
+): { startDate: string; endDate: string } {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  }).format(now);
+  const currentMonday = new Date(`${today}T12:00:00Z`);
+  const daysSinceMonday = (currentMonday.getUTCDay() + 6) % 7;
+  currentMonday.setUTCDate(currentMonday.getUTCDate() - daysSinceMonday);
+  const start = new Date(currentMonday);
+  start.setUTCDate(start.getUTCDate() - 7);
+  const end = new Date(currentMonday);
+  end.setUTCDate(end.getUTCDate() - 1);
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  };
 }
 
 export function latestCompleteCalendarDate(
@@ -215,6 +282,7 @@ function metricLeadersSection(
   })[],
   metric: "impressions" | "downloads",
   maximumNameLength: number,
+  compactValues = false,
 ): string {
   if (leaders.length === 0) {
     return "";
@@ -222,8 +290,9 @@ function metricLeadersSection(
   return `\n\n<b>${heading}</b>\n${leaders
     .map(
       (app, index) =>
-        `${index + 1}. ${new Intl.NumberFormat("en-US").format(
+        `${index + 1}. ${formatInteger(
           app[metric] ?? 0,
+          compactValues,
         )} - ${abbreviatedTelegramAppName(app.name, maximumNameLength)}`,
     )
     .join("\n")}`;
@@ -272,6 +341,53 @@ export function dailyReportCaption(report: DailyPortfolioReport): string {
   }
   throw new Error(
     "Daily report caption exceeds Telegram's 1,024-character limit",
+  );
+}
+
+export function weeklyReportCaption(report: WeeklyPortfolioReport): string {
+  const apps = sortDailyAppMetrics(report.apps);
+  const revenue = apps.reduce((sum, app) => sum + (app.proceedsUsd ?? 0), 0);
+  const pending = apps.reduce(
+    (sum, app) =>
+      sum +
+      [app.impressions, app.downloads, app.proceedsUsd].filter(
+        (value) => value === undefined,
+      ).length,
+    0,
+  );
+  const pendingLine =
+    pending > 0 ? `\n🟠 ${pending} metrics pending from Apple` : "";
+  const topImpressions = metricLeaders(apps, "impressions");
+  const topDownloads = metricLeaders(apps, "downloads");
+  const heading = `<b>🗓 Weekly App Store report</b>\n${escapeTelegramHtml(
+    `${report.weekStartDate} – ${report.weekEndDate}`,
+  )} · ${apps.length} apps · ${escapeTelegramHtml(
+    formatUsd(revenue, true),
+  )} proceeds${pendingLine}`;
+  for (
+    let maximumNameLength = 100;
+    maximumNameLength >= 8;
+    maximumNameLength -= 1
+  ) {
+    const caption = `${heading}${metricLeadersSection(
+      "Top Impressions",
+      topImpressions,
+      "impressions",
+      maximumNameLength,
+      true,
+    )}${metricLeadersSection(
+      "Top Downloads",
+      topDownloads,
+      "downloads",
+      maximumNameLength,
+      true,
+    )}`;
+    if (caption.length <= 1_024) {
+      return caption;
+    }
+  }
+  throw new Error(
+    "Weekly report caption exceeds Telegram's 1,024-character limit",
   );
 }
 
@@ -354,6 +470,7 @@ function appCard(
   rank: number,
   y: number,
   embeddedIcon?: string,
+  compactValues = false,
 ): string {
   const nameLines = wrapAppName(app.name);
   const hasWrappedName = nameLines.length > 1;
@@ -388,21 +505,32 @@ function appCard(
       <line x1="595" y1="${y + 37}" x2="595" y2="${y + 137}" stroke="#E9EDF3"/>
       <text x="670" y="${y + 61}" class="metricLabel">IMPRESSIONS</text>
       ${pendingDot(app.impressions, 649, y + 56)}
-      <text x="649" y="${y + 111}" class="metricValue">${formatInteger(app.impressions)}</text>
+      <text x="649" y="${y + 111}" class="metricValue">${formatInteger(app.impressions, compactValues)}</text>
       <text x="850" y="${y + 61}" class="metricLabel">DOWNLOADS</text>
       ${pendingDot(app.downloads, 829, y + 56)}
-      <text x="829" y="${y + 111}" class="metricValue">${formatInteger(app.downloads)}</text>
+      <text x="829" y="${y + 111}" class="metricValue">${formatInteger(app.downloads, compactValues)}</text>
       <rect x="996" y="${y + 32}" width="180" height="110" rx="22" fill="#F0FDF4"/>
       <text x="1021" y="${y + 62}" class="earningsLabel">EARNINGS</text>
       ${pendingDot(app.proceedsUsd, 1008, y + 57)}
-      <text x="1021" y="${y + 111}" class="earningsValue">${formatUsd(app.proceedsUsd)}</text>
+      <text x="1021" y="${y + 111}" class="earningsValue">${formatUsd(app.proceedsUsd, compactValues)}</text>
     </g>`;
 }
 
-export async function renderDailyReportPng(
+interface PortfolioRenderOptions {
+  title: string;
+  periodLabel: string;
+  periodPrefix: string;
+  periodText: string;
+  compactValues: boolean;
+  availabilityFooter: string;
+  manifestPeriod: Record<string, string>;
+}
+
+async function renderPortfolioReportPng(
   report: DailyPortfolioReport,
   outputPath: string,
-  fetchImplementation: typeof fetch = fetch,
+  fetchImplementation: typeof fetch,
+  options: PortfolioRenderOptions,
 ): Promise<string[]> {
   const apps = sortDailyAppMetrics(report.apps);
   const pages = paginateDailyAppMetrics(apps);
@@ -432,18 +560,24 @@ export async function renderDailyReportPng(
     (app) => app.proceedsUsd !== undefined,
   ).length;
   const totalImpressionsLabel =
-    availableImpressions === 0 ? "—" : formatInteger(totalImpressions);
+    availableImpressions === 0
+      ? "—"
+      : formatInteger(totalImpressions, options.compactValues);
   const totalDownloadsLabel =
-    availableDownloads === 0 ? "—" : formatInteger(totalDownloads);
+    availableDownloads === 0
+      ? "—"
+      : formatInteger(totalDownloads, options.compactValues);
   const totalProceedsLabel =
-    availableProceeds === 0 ? "—" : formatUsd(totalProceeds);
+    availableProceeds === 0
+      ? "—"
+      : formatUsd(totalProceeds, options.compactValues);
   const iconByAppleId = new Map(
     apps.map((app, index) => [app.appAppleId, iconUrls[index]]),
   );
   const rankByAppleId = new Map(
     apps.map((app, index) => [app.appAppleId, index + 1]),
   );
-  const sampleLabel = report.isSample ? "SAMPLE DATA" : "PREVIOUS DAY";
+  const sampleLabel = report.isSample ? "SAMPLE DATA" : options.periodLabel;
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true, mode: 0o750 });
   for (const [pageIndex, pageApps] of pages.entries()) {
@@ -459,6 +593,7 @@ export async function renderDailyReportPng(
             pageIndex * DAILY_REPORT_APPS_PER_PAGE + index + 1,
           contentTop + index * (CARD_HEIGHT + CARD_GAP),
           iconByAppleId.get(app.appAppleId),
+          options.compactValues,
         ),
       )
       .join("");
@@ -470,8 +605,8 @@ export async function renderDailyReportPng(
     <text x="184" y="98" text-anchor="middle" class="eyebrow" style="font-size:13px">${sampleLabel}</text>
     <rect x="975" y="75" width="135" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.1"/>
     <text x="1042" y="98" text-anchor="middle" class="pageNumber">${pageLabel}</text>
-    <text x="96" y="159" class="title">App portfolio report</text>
-    <text x="96" y="198" class="date">REPORT DATE · ${escapeXml(formatReportDate(report.reportDate))} · ${apps.length} public apps</text>
+    <text x="96" y="159" class="title">${escapeXml(options.title)}</text>
+    <text x="96" y="198" class="date">${escapeXml(options.periodPrefix)} · ${escapeXml(options.periodText)} · ${apps.length} public apps</text>
     <rect x="96" y="225" width="326" height="80" rx="20" fill="#FFFFFF" fill-opacity="0.07"/>
     <text x="119" y="251" class="summaryLabel">IMPRESSIONS</text>
     <text x="119" y="289" class="summaryValue">${totalImpressionsLabel}</text>
@@ -485,7 +620,7 @@ export async function renderDailyReportPng(
     <text x="807" y="289" class="summaryValue">${totalProceedsLabel}</text>
     <text x="1086" y="288" text-anchor="end" class="coverage">${availableProceeds}/${apps.length} ready</text>`
       : `
-    <text x="${SIDE}" y="79" class="continuationDate">REPORT DATE · ${escapeXml(formatReportDate(report.reportDate))}</text>
+    <text x="${SIDE}" y="79" class="continuationDate">${escapeXml(options.periodPrefix)} · ${escapeXml(options.periodText)}</text>
     <rect x="1031" y="49" width="145" height="46" rx="23" fill="#172033"/>
     <text x="1103" y="78" text-anchor="middle" class="pageNumber">${pageLabel}</text>
     <line x1="${SIDE}" y1="118" x2="${WIDTH - SIDE}" y2="118" stroke="#DCE3EC" stroke-width="2"/>`;
@@ -521,7 +656,7 @@ export async function renderDailyReportPng(
     ${cards}
     <circle cx="80" cy="${height - 94}" r="5" fill="#F59E0B"/>
     <text x="96" y="${height - 89}" class="footer">Orange dots mean Apple has not published that metric yet.</text>
-    <text x="96" y="${height - 60}" class="footer">Uses the latest Apple daily partitions. Previous-day metrics are provisional and may change for up to 3 days.</text>
+    <text x="96" y="${height - 60}" class="footer">${escapeXml(options.availabilityFooter)}</text>
     <text x="96" y="${height - 29}" class="footer">Sorted by earnings, then impressions · Earnings are estimated proceeds in USD · Generated ${escapeXml(report.generatedAt)}</text>
   </svg>`;
 
@@ -536,6 +671,7 @@ export async function renderDailyReportPng(
     `${JSON.stringify(
       {
         reportDate: report.reportDate,
+        ...options.manifestPeriod,
         generatedAt: report.generatedAt,
         appCount: apps.length,
         appsPerPage: DAILY_REPORT_APPS_PER_PAGE,
@@ -553,4 +689,52 @@ export async function renderDailyReportPng(
     { encoding: "utf8", mode: 0o640 },
   );
   return outputPaths;
+}
+
+export async function renderDailyReportPng(
+  report: DailyPortfolioReport,
+  outputPath: string,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<string[]> {
+  return renderPortfolioReportPng(report, outputPath, fetchImplementation, {
+    title: "App portfolio report",
+    periodLabel: "PREVIOUS DAY",
+    periodPrefix: "REPORT DATE",
+    periodText: formatReportDate(report.reportDate),
+    compactValues: false,
+    availabilityFooter:
+      "Uses the latest Apple daily partitions. Previous-day metrics are provisional and may change for up to 3 days.",
+    manifestPeriod: {},
+  });
+}
+
+export async function renderWeeklyReportPng(
+  report: WeeklyPortfolioReport,
+  outputPath: string,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<string[]> {
+  return renderPortfolioReportPng(
+    {
+      reportDate: report.weekEndDate,
+      generatedAt: report.generatedAt,
+      timeZone: report.timeZone,
+      apps: report.apps,
+      isSample: report.isSample,
+    },
+    outputPath,
+    fetchImplementation,
+    {
+      title: "Weekly portfolio report",
+      periodLabel: "PREVIOUS WEEK",
+      periodPrefix: "WEEK",
+      periodText: formatReportPeriod(report.weekStartDate, report.weekEndDate),
+      compactValues: true,
+      availabilityFooter:
+        "Aggregated from Apple's latest daily partitions. Recent values may change for up to 3 days.",
+      manifestPeriod: {
+        weekStartDate: report.weekStartDate,
+        weekEndDate: report.weekEndDate,
+      },
+    },
+  );
 }

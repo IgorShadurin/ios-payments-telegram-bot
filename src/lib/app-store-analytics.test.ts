@@ -5,6 +5,7 @@ import {
   ANALYTICS_REPORT_NAMES,
   AppStoreAnalyticsClient,
   aggregateMetricRows,
+  aggregateMetricRowsRange,
 } from "./app-store-analytics";
 
 describe("App Store analytics", () => {
@@ -63,6 +64,98 @@ describe("App Store analytics", () => {
     );
     expect(aggregateMetricRows("downloads", downloads, "2026-08-25")).toBe(10);
     expect(aggregateMetricRows("proceeds", proceeds, "2026-08-25")).toBe(10.5);
+    expect(
+      aggregateMetricRowsRange(
+        "impressions",
+        impressions,
+        "2026-08-24",
+        "2026-08-25",
+      ),
+    ).toBe(241);
+  });
+
+  it("uses the newest Apple partition separately for every date in a range", async () => {
+    const firstPartition = gzipSync(
+      [
+        "Date\tDownload Type\tCounts",
+        "2026-08-24\tFirst-time download\t3",
+        "2026-08-25\tRedownload\t2",
+        "",
+      ].join("\n"),
+    );
+    const correctedPartition = gzipSync(
+      ["Date\tDownload Type\tCounts", "2026-08-25\tRedownload\t4", ""].join(
+        "\n",
+      ),
+    );
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.hostname === "reports.example.com") {
+        return new Response(
+          new Uint8Array(
+            url.pathname.includes("corrected")
+              ? correctedPartition
+              : firstPartition,
+          ),
+        );
+      }
+      if (url.pathname.endsWith("/instances")) {
+        expect(url.searchParams.get("filter[processingDate]")).toBeNull();
+        return Response.json({
+          data: [
+            {
+              type: "analyticsReportInstances",
+              id: "first-instance",
+              attributes: {
+                granularity: "DAILY",
+                processingDate: "2026-08-26",
+              },
+            },
+            {
+              type: "analyticsReportInstances",
+              id: "corrected-instance",
+              attributes: {
+                granularity: "DAILY",
+                processingDate: "2026-08-27",
+              },
+            },
+          ],
+          links: {},
+        });
+      }
+      const corrected = url.pathname.includes("corrected-instance");
+      const compressed = corrected ? correctedPartition : firstPartition;
+      return Response.json({
+        data: [
+          {
+            type: "analyticsReportSegments",
+            id: "weekly-segment",
+            attributes: {
+              checksum: createHash("md5").update(compressed).digest("hex"),
+              sizeInBytes: compressed.length,
+              url: corrected
+                ? "https://reports.example.com/corrected.tsv.gz"
+                : "https://reports.example.com/first.tsv.gz",
+            },
+          },
+        ],
+        links: {},
+      });
+    });
+    const client = new AppStoreAnalyticsClient("secret", {
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+      now: () => new Date("2026-08-28T14:00:00Z"),
+    });
+
+    await expect(
+      client.readMetricRange(
+        "downloads-report",
+        "downloads",
+        "2026-08-24",
+        "2026-08-25",
+      ),
+    ).resolves.toBe(7);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("pauses before another request when Apple's hourly allowance reaches reserve", async () => {

@@ -10,8 +10,11 @@ import {
   latestCompleteCalendarDate,
   paginateDailyAppMetrics,
   previousCalendarDate,
+  previousCompletedWeek,
   renderDailyReportPng,
+  renderWeeklyReportPng,
   sortDailyAppMetrics,
+  weeklyReportCaption,
 } from "./daily-report";
 import type { DailyAppMetrics } from "./types";
 
@@ -50,6 +53,17 @@ describe("daily report", () => {
     expect(previousCalendarDate(new Date("2026-01-01T16:00:00Z"))).toBe(
       "2025-12-31",
     );
+  });
+
+  it("uses the previous completed Monday-to-Sunday week", () => {
+    expect(previousCompletedWeek(new Date("2026-09-02T16:00:00Z"))).toEqual({
+      startDate: "2026-08-24",
+      endDate: "2026-08-30",
+    });
+    expect(previousCompletedWeek(new Date("2026-09-07T06:00:00Z"))).toEqual({
+      startDate: "2026-08-31",
+      endDate: "2026-09-06",
+    });
   });
 
   it("can still calculate a conservative complete-data date", () => {
@@ -158,6 +172,23 @@ describe("daily report", () => {
     expect(caption).toContain("10. ");
   });
 
+  it("formats a compact numbered weekly Telegram caption", () => {
+    const leader = app("Weekly Leader", 2_500, 2_500);
+    leader.downloads = 1_200;
+    const caption = weeklyReportCaption({
+      weekStartDate: "2026-08-24",
+      weekEndDate: "2026-08-30",
+      generatedAt: "2026-09-02T16:00:00.000Z",
+      timeZone: "Europe/Minsk",
+      apps: [leader],
+    });
+    expect(caption).toContain("<b>🗓 Weekly App Store report</b>");
+    expect(caption).toContain("2026-08-24 – 2026-08-30");
+    expect(caption).toContain("$2.5k proceeds");
+    expect(caption).toContain("1. 2.5k - Weekly Leader");
+    expect(caption).toContain("1. 1.2k - Weekly Leader");
+  });
+
   it("renders a valid PNG without requiring an icon", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "daily-report-"));
     directories.push(directory);
@@ -217,5 +248,31 @@ describe("daily report", () => {
         readFileSync(path.join(directory, "report.manifest.json"), "utf8"),
       ),
     ).toMatchObject({ appCount: 11, appsPerPage: 10, pageCount: 2 });
+  });
+
+  it("renders a weekly report with its date range in the manifest", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "weekly-report-"));
+    directories.push(directory);
+    const outputPath = path.join(directory, "weekly.png");
+    const paths = await renderWeeklyReportPng(
+      {
+        weekStartDate: "2026-08-24",
+        weekEndDate: "2026-08-30",
+        generatedAt: "2026-09-02T16:00:00.000Z",
+        timeZone: "Europe/Minsk",
+        apps: [app("Weekly Example", 1_250, 12_500)],
+      },
+      outputPath,
+    );
+    expect(paths).toEqual([outputPath]);
+    expect(
+      JSON.parse(
+        readFileSync(path.join(directory, "weekly.manifest.json"), "utf8"),
+      ),
+    ).toMatchObject({
+      weekStartDate: "2026-08-24",
+      weekEndDate: "2026-08-30",
+      appCount: 1,
+    });
   });
 });

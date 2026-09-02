@@ -243,7 +243,18 @@ export function aggregateMetricRows(
   rows: readonly TsvRow[],
   reportDate: string,
 ): number {
-  const forDate = rows.filter((row) => row.Date === reportDate);
+  return aggregateMetricRowsRange(metric, rows, reportDate, reportDate);
+}
+
+export function aggregateMetricRowsRange(
+  metric: AnalyticsMetric,
+  rows: readonly TsvRow[],
+  startDate: string,
+  endDate: string,
+): number {
+  const forDate = rows.filter(
+    (row) => row.Date >= startDate && row.Date <= endDate,
+  );
   if (metric === "impressions") {
     return forDate
       .filter(
@@ -559,6 +570,84 @@ export class AppStoreAnalyticsClient {
     }
 
     return completeProcessingDate < currentDate ? 0 : undefined;
+  }
+
+  async readMetricRange(
+    reportId: string,
+    metric: AnalyticsMetric,
+    startDate: string,
+    endDate: string,
+  ): Promise<number | undefined> {
+    if (startDate > endDate) {
+      throw new AppStoreAnalyticsError(
+        "Analytics report start date must not follow its end date",
+      );
+    }
+    const currentDate = this.now().toISOString().slice(0, 10);
+    const instances = await this.listDailyInstances(reportId);
+    const instancesByProcessingDate = new Map<
+      string,
+      ReportInstanceSummary[]
+    >();
+    for (const instance of instances) {
+      const sameDate = instancesByProcessingDate.get(instance.processingDate);
+      if (sameDate) {
+        sameDate.push(instance);
+      } else {
+        instancesByProcessingDate.set(instance.processingDate, [instance]);
+      }
+    }
+    const rowsByProcessingDate = new Map<string, Promise<TsvRow[]>>();
+    const rowsForProcessingDate = (
+      processingDate: string,
+    ): Promise<TsvRow[]> => {
+      const cached = rowsByProcessingDate.get(processingDate);
+      if (cached) {
+        return cached;
+      }
+      const downloaded = Promise.all(
+        (instancesByProcessingDate.get(processingDate) ?? []).map((instance) =>
+          this.downloadInstanceRows(instance.id),
+        ),
+      ).then((groups) => groups.flat());
+      rowsByProcessingDate.set(processingDate, downloaded);
+      return downloaded;
+    };
+
+    let total = 0;
+    for (
+      let reportDate = startDate;
+      reportDate <= endDate;
+      reportDate = addUtcCalendarDays(reportDate, 1)
+    ) {
+      const firstProcessingDate = addUtcCalendarDays(reportDate, 1);
+      const completeProcessingDate = addUtcCalendarDays(
+        reportDate,
+        ANALYTICS_COMPLETENESS_DAYS[metric],
+      );
+      let processingDate =
+        currentDate < completeProcessingDate
+          ? currentDate
+          : completeProcessingDate;
+      let sawInstance = false;
+      let foundRows = false;
+      while (processingDate >= firstProcessingDate) {
+        if (instancesByProcessingDate.has(processingDate)) {
+          sawInstance = true;
+          const rows = await rowsForProcessingDate(processingDate);
+          if (rows.some((row) => row.Date === reportDate)) {
+            total += aggregateMetricRows(metric, rows, reportDate);
+            foundRows = true;
+            break;
+          }
+        }
+        processingDate = addUtcCalendarDays(processingDate, -1);
+      }
+      if (!foundRows && !sawInstance && completeProcessingDate >= currentDate) {
+        return undefined;
+      }
+    }
+    return total;
   }
 }
 

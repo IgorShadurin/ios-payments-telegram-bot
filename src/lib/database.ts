@@ -13,6 +13,7 @@ import type {
   StoredDailyReportDelivery,
   StoredNotification,
   StoredTelegramOutboxMessage,
+  StoredWeeklyReportDelivery,
 } from "./types";
 
 interface AppRow {
@@ -94,6 +95,20 @@ interface ExchangeRateRow {
 interface DailyReportDeliveryRow {
   report_date: string;
   delivery_status: StoredDailyReportDelivery["deliveryStatus"];
+  delivery_attempts: number;
+  next_attempt_at: number;
+  locked_at: number | null;
+  image_path: string;
+  last_error: string | null;
+  telegram_message_id: number | null;
+  created_at: number;
+  delivered_at: number | null;
+}
+
+interface WeeklyReportDeliveryRow {
+  week_start_date: string;
+  week_end_date: string;
+  delivery_status: StoredWeeklyReportDelivery["deliveryStatus"];
   delivery_attempts: number;
   next_attempt_at: number;
   locked_at: number | null;
@@ -212,6 +227,23 @@ function mapDailyReportDelivery(
   };
 }
 
+function mapWeeklyReportDelivery(
+  row: WeeklyReportDeliveryRow,
+): StoredWeeklyReportDelivery {
+  return {
+    weekStartDate: row.week_start_date,
+    weekEndDate: row.week_end_date,
+    deliveryStatus: row.delivery_status,
+    deliveryAttempts: row.delivery_attempts,
+    nextAttemptAt: row.next_attempt_at,
+    imagePath: row.image_path,
+    lastError: row.last_error ?? undefined,
+    telegramMessageId: row.telegram_message_id ?? undefined,
+    createdAt: row.created_at,
+    deliveredAt: row.delivered_at ?? undefined,
+  };
+}
+
 export class AppDatabase {
   private readonly database: Database.Database;
 
@@ -229,7 +261,7 @@ export class AppDatabase {
       simple: true,
     }) as number;
 
-    if (version > 6) {
+    if (version > 7) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -521,6 +553,35 @@ export class AppDatabase {
           PRAGMA user_version = 6;
         `);
       })();
+      version = 6;
+    }
+
+    if (version === 6) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE weekly_report_deliveries (
+            week_start_date TEXT PRIMARY KEY
+              CHECK (week_start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            week_end_date TEXT NOT NULL
+              CHECK (week_end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            delivery_status TEXT NOT NULL DEFAULT 'pending'
+              CHECK (delivery_status IN ('pending', 'sending', 'retry', 'delivered')),
+            delivery_attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL,
+            locked_at INTEGER,
+            image_path TEXT NOT NULL,
+            last_error TEXT,
+            telegram_message_id INTEGER,
+            created_at INTEGER NOT NULL,
+            delivered_at INTEGER
+          );
+
+          CREATE INDEX weekly_report_deliveries_due_idx
+            ON weekly_report_deliveries(delivery_status, next_attempt_at);
+
+          PRAGMA user_version = 7;
+        `);
+      })();
     }
   }
 
@@ -708,6 +769,95 @@ export class AppDatabase {
          WHERE report_date = ? AND delivery_status = 'sending'`,
       )
       .run(nextAttemptAt, error.slice(0, 500), reportDate);
+  }
+
+  getWeeklyReportDelivery(
+    weekStartDate: string,
+  ): StoredWeeklyReportDelivery | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT * FROM weekly_report_deliveries WHERE week_start_date = ?",
+      )
+      .get(weekStartDate) as WeeklyReportDeliveryRow | undefined;
+    return row ? mapWeeklyReportDelivery(row) : undefined;
+  }
+
+  claimWeeklyReportDelivery(
+    weekStartDate: string,
+    weekEndDate: string,
+    imagePath: string,
+    forceRedelivery = false,
+  ): StoredWeeklyReportDelivery | undefined {
+    const now = Date.now();
+    const staleLock = now - 90 * 60 * 1_000;
+    return this.database.transaction(() => {
+      if (forceRedelivery) {
+        this.database
+          .prepare(
+            `UPDATE weekly_report_deliveries
+             SET delivery_status = 'pending', next_attempt_at = ?,
+                 locked_at = NULL, last_error = NULL,
+                 telegram_message_id = NULL, delivered_at = NULL
+             WHERE week_start_date = ? AND delivery_status = 'delivered'`,
+          )
+          .run(now, weekStartDate);
+      }
+      this.database
+        .prepare(
+          `INSERT INTO weekly_report_deliveries (
+            week_start_date, week_end_date, delivery_status, next_attempt_at,
+            image_path, created_at
+          ) VALUES (?, ?, 'pending', ?, ?, ?)
+          ON CONFLICT(week_start_date) DO NOTHING`,
+        )
+        .run(weekStartDate, weekEndDate, now, imagePath, now);
+      const result = this.database
+        .prepare(
+          `UPDATE weekly_report_deliveries
+           SET delivery_status = 'sending', locked_at = ?, image_path = ?
+           WHERE week_start_date = ? AND week_end_date = ?
+             AND (
+               (delivery_status IN ('pending', 'retry') AND next_attempt_at <= ?)
+               OR (delivery_status = 'sending' AND locked_at < ?)
+             )`,
+        )
+        .run(now, imagePath, weekStartDate, weekEndDate, now, staleLock);
+      return result.changes === 1
+        ? this.getWeeklyReportDelivery(weekStartDate)
+        : undefined;
+    })();
+  }
+
+  markWeeklyReportDelivered(
+    weekStartDate: string,
+    telegramMessageId: number,
+  ): void {
+    this.database
+      .prepare(
+        `UPDATE weekly_report_deliveries
+         SET delivery_status = 'delivered',
+             delivery_attempts = delivery_attempts + 1,
+             telegram_message_id = ?, delivered_at = ?, locked_at = NULL,
+             last_error = NULL
+         WHERE week_start_date = ? AND delivery_status = 'sending'`,
+      )
+      .run(telegramMessageId, Date.now(), weekStartDate);
+  }
+
+  markWeeklyReportForRetry(
+    weekStartDate: string,
+    error: string,
+    nextAttemptAt: number,
+  ): void {
+    this.database
+      .prepare(
+        `UPDATE weekly_report_deliveries
+         SET delivery_status = 'retry',
+             delivery_attempts = delivery_attempts + 1,
+             next_attempt_at = ?, locked_at = NULL, last_error = ?
+         WHERE week_start_date = ? AND delivery_status = 'sending'`,
+      )
+      .run(nextAttemptAt, error.slice(0, 500), weekStartDate);
   }
 
   enqueueTelegramMessage(

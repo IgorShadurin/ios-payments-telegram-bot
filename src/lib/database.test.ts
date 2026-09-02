@@ -172,6 +172,34 @@ describe("AppDatabase", () => {
     });
   });
 
+  it("claims and deduplicates a delivered weekly report", () => {
+    expect(
+      database.claimWeeklyReportDelivery(
+        "2026-08-24",
+        "2026-08-30",
+        "/data/weekly.png",
+      ),
+    ).toMatchObject({
+      weekStartDate: "2026-08-24",
+      weekEndDate: "2026-08-30",
+      deliveryStatus: "sending",
+    });
+    expect(
+      database.claimWeeklyReportDelivery(
+        "2026-08-24",
+        "2026-08-30",
+        "/data/weekly.png",
+      ),
+    ).toBeUndefined();
+
+    database.markWeeklyReportDelivered("2026-08-24", 92);
+    expect(database.getWeeklyReportDelivery("2026-08-24")).toMatchObject({
+      deliveryStatus: "delivered",
+      deliveryAttempts: 1,
+      telegramMessageId: 92,
+    });
+  });
+
   it("stores review batches and does not alert for the initial baseline", () => {
     const app = database.addApp("Example", "com.example.app", 123456789);
     const oldReview = {

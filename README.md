@@ -139,6 +139,41 @@ Set `DAILY_REPORT_OUTPUT_DIR=/data/reports` to keep generated PNGs in the
 persistent volume. If the scheduler only supports UTC, the equivalent current
 window is `0,15,30,45 16-18 * * *`.
 
+## Weekly App Store portfolio report
+
+The weekly worker aggregates the previous completed Monday-through-Sunday
+period for every enabled app. It downloads one latest Apple daily partition per
+metric and app, then totals all seven dates locally. The PNG uses a distinct
+`PREVIOUS WEEK` header, includes the full portfolio with at most 10 apps per
+page, and compacts values of 1,000 or more (`1k`, `2.5k`, and so on). Its
+Telegram caption uses a calendar icon and contains numbered Top 10 Impressions
+and Top 10 Downloads lists.
+
+```bash
+# Preview the previous completed week
+npm run report:weekly:dev -- --no-send
+
+# Generate and send the previous completed week
+npm run report:weekly:dev
+
+# Explicitly regenerate and resend a historical Monday-through-Sunday week
+npm run report:weekly:dev -- --week-start 2026-08-24 --force-send
+```
+
+Monday at 19:00 Minsk is preferable to 09:00 because it gives Apple ten more
+hours to publish Sunday's partitions. If Sunday data is still unavailable, the
+worker sends nothing incomplete and retries safely. In production, run it once
+at 19:00 Monday through Wednesday; delivery is deduplicated by week, so Tuesday
+and Wednesday are fallback runs only and the heavier weekly aggregation cannot
+consume Apple's hourly allowance every 15 minutes:
+
+```text
+0 19 * * 1-3
+```
+
+For a UTC-only scheduler, use `0 16 * * 1-3`. The production command is
+`node dist/scripts/weekly-report.js`.
+
 Use the optional `APPLE_ANALYTICS_KEY_TYPE`, `APPLE_ANALYTICS_ISSUER_ID`,
 `APPLE_ANALYTICS_KEY_ID`, and `APPLE_ANALYTICS_PRIVATE_KEY_BASE64` variables
 for a dedicated analytics key. When they are omitted, the worker falls back to
