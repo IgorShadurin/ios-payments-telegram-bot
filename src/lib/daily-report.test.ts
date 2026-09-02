@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DAILY_REPORT_APPS_PER_PAGE,
   DAILY_REPORT_LAG_DAYS,
+  dailyReportCaption,
   deliveryNeedsCompleteRefresh,
   latestCompleteCalendarDate,
   paginateDailyAppMetrics,
@@ -89,6 +90,37 @@ describe("daily report", () => {
       "Views",
       "Pending",
     ]);
+  });
+
+  it("adds the five highest-impression apps to the Telegram caption", () => {
+    const apps = [
+      app("Sixth", 1, 100),
+      app("Third", 1, 300),
+      app("First & Best", 1, 612),
+      app("Pending", 1, undefined),
+      app("Fifth", 1, 200),
+      app("Second", 1, 390),
+      app("Fourth", 1, 250),
+    ];
+
+    expect(
+      dailyReportCaption({
+        reportDate: "2026-08-29",
+        generatedAt: "2026-09-02T16:00:00.000Z",
+        timeZone: "Europe/Minsk",
+        apps,
+      }),
+    ).toBe(
+      "<b>📊 Daily App Store report</b>\n" +
+        "2026-08-29 · 7 apps · $7.00 proceeds\n" +
+        "🟠 1 metrics pending from Apple\n\n" +
+        "<b>Top Impressions</b>\n" +
+        "612 - First &amp; Best\n" +
+        "390 - Second\n" +
+        "300 - Third\n" +
+        "250 - Fourth\n" +
+        "200 - Fifth",
+    );
   });
 
   it("renders a valid PNG without requiring an icon", async () => {

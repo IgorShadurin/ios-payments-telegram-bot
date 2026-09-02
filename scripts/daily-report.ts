@@ -14,13 +14,12 @@ import {
 } from "../src/lib/config";
 import {
   DAILY_REPORT_TIME_ZONE,
+  dailyReportCaption,
   deliveryNeedsCompleteRefresh,
   latestCompleteCalendarDate,
   renderDailyReportPng,
-  sortDailyAppMetrics,
 } from "../src/lib/daily-report";
 import { AppDatabase } from "../src/lib/database";
-import { escapeTelegramHtml } from "../src/lib/message";
 import {
   sendTelegramPhotoGroup,
   TelegramDeliveryError,
@@ -197,27 +196,6 @@ async function collectApp(
   };
 }
 
-function caption(report: DailyPortfolioReport): string {
-  const apps = sortDailyAppMetrics(report.apps);
-  const revenue = apps.reduce((sum, app) => sum + (app.proceedsUsd ?? 0), 0);
-  const pending = apps.reduce(
-    (sum, app) =>
-      sum +
-      [app.impressions, app.downloads, app.proceedsUsd].filter(
-        (value) => value === undefined,
-      ).length,
-    0,
-  );
-  const pendingLine =
-    pending > 0 ? `\n🟠 ${pending} metrics pending from Apple` : "";
-  return `<b>📊 Daily App Store report</b>\n${escapeTelegramHtml(report.reportDate)} · ${apps.length} apps · ${escapeTelegramHtml(
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(revenue),
-  )} proceeds${pendingLine}`;
-}
-
 async function renderSample(
   reportDate: string,
   outputPath: string,
@@ -342,7 +320,7 @@ async function main(): Promise<void> {
       }
       const messageIds = await sendTelegramPhotoGroup(
         outputPaths,
-        caption(report),
+        dailyReportCaption(report),
       );
       database.markDailyReportDelivered(reportDate, messageIds[0]);
       console.log(

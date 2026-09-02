@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
+import { escapeTelegramHtml } from "./message";
 import type { DailyAppMetrics, DailyPortfolioReport } from "./types";
 
 export const DAILY_REPORT_TIME_ZONE = "Europe/Minsk";
@@ -162,6 +163,48 @@ export function sortDailyAppMetrics(
     }
     return left.name.localeCompare(right.name);
   });
+}
+
+export function dailyReportCaption(report: DailyPortfolioReport): string {
+  const apps = sortDailyAppMetrics(report.apps);
+  const revenue = apps.reduce((sum, app) => sum + (app.proceedsUsd ?? 0), 0);
+  const pending = apps.reduce(
+    (sum, app) =>
+      sum +
+      [app.impressions, app.downloads, app.proceedsUsd].filter(
+        (value) => value === undefined,
+      ).length,
+    0,
+  );
+  const pendingLine =
+    pending > 0 ? `\n🟠 ${pending} metrics pending from Apple` : "";
+  const topImpressions = [...apps]
+    .filter(
+      (app): app is DailyAppMetrics & { impressions: number } =>
+        app.impressions !== undefined,
+    )
+    .sort(
+      (left, right) =>
+        right.impressions - left.impressions ||
+        left.name.localeCompare(right.name) ||
+        left.appAppleId - right.appAppleId,
+    )
+    .slice(0, 5);
+  const topImpressionsLine =
+    topImpressions.length > 0
+      ? `\n\n<b>Top Impressions</b>\n${topImpressions
+          .map(
+            (app) =>
+              `${new Intl.NumberFormat("en-US").format(app.impressions)} - ${escapeTelegramHtml(app.name)}`,
+          )
+          .join("\n")}`
+      : "";
+  return `<b>📊 Daily App Store report</b>\n${escapeTelegramHtml(report.reportDate)} · ${apps.length} apps · ${escapeTelegramHtml(
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+    }).format(revenue),
+  )} proceeds${pendingLine}${topImpressionsLine}`;
 }
 
 export function paginateDailyAppMetrics(
