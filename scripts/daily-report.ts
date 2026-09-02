@@ -13,6 +13,7 @@ import {
   getDatabasePath,
 } from "../src/lib/config";
 import {
+  addMetricComparisons,
   DAILY_REPORT_TIME_ZONE,
   dailyReportCaption,
   deliveryNeedsCompleteRefresh,
@@ -145,6 +146,12 @@ class AppleAnalyticsPendingError extends Error {
     super(message);
     this.name = "AppleAnalyticsPendingError";
   }
+}
+
+function addUtcCalendarDays(date: string, days: number): string {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
 }
 
 function outputPathForDate(reportDate: string): string {
@@ -364,12 +371,7 @@ async function main(): Promise<void> {
         metrics.push(await collectApp(client, getSetupClient, app, reportDate));
       }
       inferZeroActivityAfterPortfolioPublication(metrics);
-      const report: DailyPortfolioReport = {
-        reportDate,
-        generatedAt: new Date().toISOString(),
-        timeZone: DAILY_REPORT_TIME_ZONE,
-        apps: metrics,
-      };
+      database.storePortfolioMetrics("daily", reportDate, reportDate, metrics);
       const entirelyPendingMetrics = [
         ["impressions", metrics.every((app) => app.impressions === undefined)],
         ["downloads", metrics.every((app) => app.downloads === undefined)],
@@ -384,6 +386,39 @@ async function main(): Promise<void> {
           )} for ${reportDate}; retrying later`,
         );
       }
+      const comparisonDate = addUtcCalendarDays(reportDate, -7);
+      let previousMetrics = database.getPortfolioMetrics(
+        "daily",
+        comparisonDate,
+      );
+      const storedAppleIds = new Set(
+        previousMetrics.map((app) => app.appAppleId),
+      );
+      const missingComparisonApps = apps.filter(
+        (app) => !storedAppleIds.has(app.appAppleId),
+      );
+      if (missingComparisonApps.length > 0) {
+        const collectedComparisonMetrics: CollectedDailyAppMetrics[] = [];
+        for (const app of missingComparisonApps) {
+          collectedComparisonMetrics.push(
+            await collectApp(client, getSetupClient, app, comparisonDate),
+          );
+        }
+        inferZeroActivityAfterPortfolioPublication(collectedComparisonMetrics);
+        database.storePortfolioMetrics(
+          "daily",
+          comparisonDate,
+          comparisonDate,
+          collectedComparisonMetrics,
+        );
+        previousMetrics = database.getPortfolioMetrics("daily", comparisonDate);
+      }
+      const report: DailyPortfolioReport = {
+        reportDate,
+        generatedAt: new Date().toISOString(),
+        timeZone: DAILY_REPORT_TIME_ZONE,
+        apps: addMetricComparisons(metrics, previousMetrics),
+      };
       const outputPaths = await renderDailyReportPng(report, outputPath);
       if (values["no-send"]) {
         console.log(JSON.stringify({ reportDate, outputPaths, sent: false }));

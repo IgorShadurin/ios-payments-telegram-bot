@@ -13,6 +13,7 @@ import {
   getDatabasePath,
 } from "../src/lib/config";
 import {
+  addMetricComparisons,
   DAILY_REPORT_TIME_ZONE,
   previousCompletedWeek,
   renderWeeklyReportPng,
@@ -253,6 +254,7 @@ async function main(): Promise<void> {
         );
       }
       inferZeroActivityAfterPortfolioPublication(metrics);
+      database.storePortfolioMetrics("weekly", startDate, endDate, metrics);
       const pendingMetrics = metrics.reduce(
         (sum, app) =>
           sum +
@@ -266,12 +268,49 @@ async function main(): Promise<void> {
           `Apple has not published all weekly metrics for ${startDate} through ${endDate}; retrying later`,
         );
       }
+      const comparisonStartDate = addUtcCalendarDays(startDate, -7);
+      const comparisonEndDate = addUtcCalendarDays(endDate, -7);
+      let previousMetrics = database.getPortfolioMetrics(
+        "weekly",
+        comparisonStartDate,
+      );
+      const storedAppleIds = new Set(
+        previousMetrics.map((app) => app.appAppleId),
+      );
+      const missingComparisonApps = apps.filter(
+        (app) => !storedAppleIds.has(app.appAppleId),
+      );
+      if (missingComparisonApps.length > 0) {
+        const collectedComparisonMetrics: CollectedWeeklyAppMetrics[] = [];
+        for (const app of missingComparisonApps) {
+          collectedComparisonMetrics.push(
+            await collectApp(
+              client,
+              getSetupClient,
+              app,
+              comparisonStartDate,
+              comparisonEndDate,
+            ),
+          );
+        }
+        inferZeroActivityAfterPortfolioPublication(collectedComparisonMetrics);
+        database.storePortfolioMetrics(
+          "weekly",
+          comparisonStartDate,
+          comparisonEndDate,
+          collectedComparisonMetrics,
+        );
+        previousMetrics = database.getPortfolioMetrics(
+          "weekly",
+          comparisonStartDate,
+        );
+      }
       const report: WeeklyPortfolioReport = {
         weekStartDate: startDate,
         weekEndDate: endDate,
         generatedAt: new Date().toISOString(),
         timeZone: DAILY_REPORT_TIME_ZONE,
-        apps: metrics,
+        apps: addMetricComparisons(metrics, previousMetrics),
       };
       const outputPaths = await renderWeeklyReportPng(report, outputPath);
       if (values["no-send"]) {

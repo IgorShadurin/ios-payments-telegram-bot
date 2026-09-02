@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  addMetricComparisons,
   DAILY_REPORT_APPS_PER_PAGE,
   DAILY_REPORT_LAG_DAYS,
   dailyReportCaption,
@@ -187,6 +188,34 @@ describe("daily report", () => {
     expect(caption).toContain("$2.5k proceeds");
     expect(caption).toContain("1. 2.5k - Weekly Leader");
     expect(caption).toContain("1. 1.2k - Weekly Leader");
+  });
+
+  it("adds safe percentage changes and omits zero or missing baselines", () => {
+    const growing = app("Growing", 20, 128);
+    growing.downloads = 9;
+    const falling = app("Falling", 10, 90);
+    falling.downloads = 9;
+    const newApp = app("New App", 5, 500);
+    newApp.downloads = 50;
+    const compared = addMetricComparisons(
+      [growing, falling, newApp],
+      [
+        { ...growing, impressions: 100, downloads: 10 },
+        { ...falling, impressions: 100, downloads: 10 },
+        { ...newApp, impressions: 0, downloads: 0 },
+      ],
+    );
+    const caption = dailyReportCaption({
+      reportDate: "2026-08-29",
+      generatedAt: "2026-09-02T16:00:00.000Z",
+      timeZone: "Europe/Minsk",
+      apps: compared,
+    });
+    expect(caption).toContain("1. 500 - New App");
+    expect(caption).toContain("2. 128 (+28%) - Growing");
+    expect(caption).toContain("3. 90 (-10%) - Falling");
+    expect(caption).toContain("9 (-10%) - Growing");
+    expect(caption).not.toContain("New App (");
   });
 
   it("renders a valid PNG without requiring an icon", async () => {

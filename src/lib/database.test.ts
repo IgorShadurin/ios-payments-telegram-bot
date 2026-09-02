@@ -200,6 +200,62 @@ describe("AppDatabase", () => {
     });
   });
 
+  it("stores every app metric snapshot and refreshes provisional data", () => {
+    const apps = [
+      {
+        appAppleId: 123456789,
+        name: "Available",
+        bundleId: "com.example.available",
+        impressions: 100,
+        downloads: 10,
+        proceedsUsd: 2.5,
+        impressionsAvailability: "available" as const,
+        downloadsAvailability: "available" as const,
+        proceedsAvailability: "available" as const,
+      },
+      {
+        appAppleId: 987654321,
+        name: "Pending",
+        bundleId: "com.example.pending",
+        impressionsAvailability: "pending" as const,
+        downloadsAvailability: "pending" as const,
+        proceedsAvailability: "pending" as const,
+      },
+    ];
+    database.storePortfolioMetrics(
+      "daily",
+      "2026-08-25",
+      "2026-08-25",
+      apps,
+      1_000,
+    );
+    expect(database.getPortfolioMetrics("daily", "2026-08-25")).toEqual([
+      expect.objectContaining({
+        name: "Available",
+        impressions: 100,
+        collectedAt: 1_000,
+      }),
+      expect.objectContaining({
+        name: "Pending",
+        impressions: undefined,
+        collectedAt: 1_000,
+      }),
+    ]);
+
+    database.storePortfolioMetrics(
+      "daily",
+      "2026-08-25",
+      "2026-08-25",
+      [{ ...apps[0], impressions: 120 }],
+      2_000,
+    );
+    expect(
+      database
+        .getPortfolioMetrics("daily", "2026-08-25")
+        .find((item) => item.appAppleId === 123456789),
+    ).toMatchObject({ impressions: 120, collectedAt: 2_000 });
+  });
+
   it("stores review batches and does not alert for the initial baseline", () => {
     const app = database.addApp("Example", "com.example.app", 123456789);
     const oldReview = {

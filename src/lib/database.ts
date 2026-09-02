@@ -5,13 +5,16 @@ import { getDatabasePath } from "./config";
 import type {
   CustomerReviewBatchResult,
   CustomerReviewWithMessage,
+  DailyAppMetrics,
   ExchangeRate,
   NewNotification,
+  PortfolioReportKind,
   RegisteredApp,
   StoredCustomerReview,
   StoredCustomerReviewWithApp,
   StoredDailyReportDelivery,
   StoredNotification,
+  StoredPortfolioMetricSnapshot,
   StoredTelegramOutboxMessage,
   StoredWeeklyReportDelivery,
 } from "./types";
@@ -117,6 +120,22 @@ interface WeeklyReportDeliveryRow {
   telegram_message_id: number | null;
   created_at: number;
   delivered_at: number | null;
+}
+
+interface PortfolioMetricSnapshotRow {
+  report_kind: PortfolioReportKind;
+  period_start_date: string;
+  period_end_date: string;
+  app_apple_id: number;
+  app_name: string;
+  bundle_id: string;
+  impressions: number | null;
+  downloads: number | null;
+  proceeds_usd: number | null;
+  impressions_availability: StoredPortfolioMetricSnapshot["impressionsAvailability"];
+  downloads_availability: StoredPortfolioMetricSnapshot["downloadsAvailability"];
+  proceeds_availability: StoredPortfolioMetricSnapshot["proceedsAvailability"];
+  collected_at: number;
 }
 
 function mapApp(row: AppRow): RegisteredApp {
@@ -244,6 +263,26 @@ function mapWeeklyReportDelivery(
   };
 }
 
+function mapPortfolioMetricSnapshot(
+  row: PortfolioMetricSnapshotRow,
+): StoredPortfolioMetricSnapshot {
+  return {
+    reportKind: row.report_kind,
+    periodStartDate: row.period_start_date,
+    periodEndDate: row.period_end_date,
+    appAppleId: row.app_apple_id,
+    name: row.app_name,
+    bundleId: row.bundle_id,
+    impressions: row.impressions ?? undefined,
+    downloads: row.downloads ?? undefined,
+    proceedsUsd: row.proceeds_usd ?? undefined,
+    impressionsAvailability: row.impressions_availability,
+    downloadsAvailability: row.downloads_availability,
+    proceedsAvailability: row.proceeds_availability,
+    collectedAt: row.collected_at,
+  };
+}
+
 export class AppDatabase {
   private readonly database: Database.Database;
 
@@ -261,7 +300,7 @@ export class AppDatabase {
       simple: true,
     }) as number;
 
-    if (version > 7) {
+    if (version > 8) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -582,6 +621,43 @@ export class AppDatabase {
           PRAGMA user_version = 7;
         `);
       })();
+      version = 7;
+    }
+
+    if (version === 7) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE portfolio_metric_snapshots (
+            report_kind TEXT NOT NULL
+              CHECK (report_kind IN ('daily', 'weekly')),
+            period_start_date TEXT NOT NULL
+              CHECK (period_start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            period_end_date TEXT NOT NULL
+              CHECK (period_end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            app_apple_id INTEGER NOT NULL,
+            app_name TEXT NOT NULL,
+            bundle_id TEXT NOT NULL,
+            impressions INTEGER,
+            downloads INTEGER,
+            proceeds_usd REAL,
+            impressions_availability TEXT NOT NULL
+              CHECK (impressions_availability IN ('available', 'pending')),
+            downloads_availability TEXT NOT NULL
+              CHECK (downloads_availability IN ('available', 'pending')),
+            proceeds_availability TEXT NOT NULL
+              CHECK (proceeds_availability IN ('available', 'pending')),
+            collected_at INTEGER NOT NULL,
+            PRIMARY KEY (report_kind, period_start_date, app_apple_id)
+          );
+
+          CREATE INDEX portfolio_metric_snapshots_period_idx
+            ON portfolio_metric_snapshots(
+              report_kind, period_start_date, period_end_date
+            );
+
+          PRAGMA user_version = 8;
+        `);
+      })();
     }
   }
 
@@ -858,6 +934,67 @@ export class AppDatabase {
          WHERE week_start_date = ? AND delivery_status = 'sending'`,
       )
       .run(nextAttemptAt, error.slice(0, 500), weekStartDate);
+  }
+
+  storePortfolioMetrics(
+    reportKind: PortfolioReportKind,
+    periodStartDate: string,
+    periodEndDate: string,
+    apps: readonly DailyAppMetrics[],
+    collectedAt = Date.now(),
+  ): void {
+    const upsert = this.database.prepare(
+      `INSERT INTO portfolio_metric_snapshots (
+        report_kind, period_start_date, period_end_date, app_apple_id,
+        app_name, bundle_id, impressions, downloads, proceeds_usd,
+        impressions_availability, downloads_availability,
+        proceeds_availability, collected_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(report_kind, period_start_date, app_apple_id) DO UPDATE SET
+        period_end_date = excluded.period_end_date,
+        app_name = excluded.app_name,
+        bundle_id = excluded.bundle_id,
+        impressions = excluded.impressions,
+        downloads = excluded.downloads,
+        proceeds_usd = excluded.proceeds_usd,
+        impressions_availability = excluded.impressions_availability,
+        downloads_availability = excluded.downloads_availability,
+        proceeds_availability = excluded.proceeds_availability,
+        collected_at = excluded.collected_at`,
+    );
+    this.database.transaction(() => {
+      for (const app of apps) {
+        upsert.run(
+          reportKind,
+          periodStartDate,
+          periodEndDate,
+          app.appAppleId,
+          app.name,
+          app.bundleId,
+          app.impressions ?? null,
+          app.downloads ?? null,
+          app.proceedsUsd ?? null,
+          app.impressionsAvailability,
+          app.downloadsAvailability,
+          app.proceedsAvailability,
+          collectedAt,
+        );
+      }
+    })();
+  }
+
+  getPortfolioMetrics(
+    reportKind: PortfolioReportKind,
+    periodStartDate: string,
+  ): StoredPortfolioMetricSnapshot[] {
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM portfolio_metric_snapshots
+         WHERE report_kind = ? AND period_start_date = ?
+         ORDER BY app_name COLLATE NOCASE, app_apple_id`,
+      )
+      .all(reportKind, periodStartDate) as PortfolioMetricSnapshotRow[];
+    return rows.map(mapPortfolioMetricSnapshot);
   }
 
   enqueueTelegramMessage(

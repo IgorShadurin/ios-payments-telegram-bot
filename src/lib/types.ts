@@ -148,6 +148,18 @@ export interface DailyAppMetrics {
   impressionsAvailability: DailyMetricAvailability;
   downloadsAvailability: DailyMetricAvailability;
   proceedsAvailability: DailyMetricAvailability;
+  impressionsChangePercent?: number;
+  downloadsChangePercent?: number;
+  proceedsChangePercent?: number;
+}
+
+export type PortfolioReportKind = "daily" | "weekly";
+
+export interface StoredPortfolioMetricSnapshot extends DailyAppMetrics {
+  reportKind: PortfolioReportKind;
+  periodStartDate: string;
+  periodEndDate: string;
+  collectedAt: number;
 }
 
 export interface DailyPortfolioReport {

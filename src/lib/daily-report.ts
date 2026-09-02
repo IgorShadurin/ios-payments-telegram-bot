@@ -232,6 +232,43 @@ export function sortDailyAppMetrics(
   });
 }
 
+function percentageChange(
+  current: number | undefined,
+  previous: number | undefined,
+): number | undefined {
+  if (current === undefined || previous === undefined || previous <= 0) {
+    return undefined;
+  }
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+export function addMetricComparisons(
+  apps: readonly DailyAppMetrics[],
+  previousApps: readonly DailyAppMetrics[],
+): DailyAppMetrics[] {
+  const previousByAppleId = new Map(
+    previousApps.map((app) => [app.appAppleId, app]),
+  );
+  return apps.map((app) => {
+    const previous = previousByAppleId.get(app.appAppleId);
+    return {
+      ...app,
+      impressionsChangePercent: percentageChange(
+        app.impressions,
+        previous?.impressions,
+      ),
+      downloadsChangePercent: percentageChange(
+        app.downloads,
+        previous?.downloads,
+      ),
+      proceedsChangePercent: percentageChange(
+        app.proceedsUsd,
+        previous?.proceedsUsd,
+      ),
+    };
+  });
+}
+
 function abbreviatedTelegramAppName(
   name: string,
   maximumEscapedLength: number,
@@ -287,14 +324,23 @@ function metricLeadersSection(
   if (leaders.length === 0) {
     return "";
   }
+  const changeField =
+    metric === "impressions"
+      ? "impressionsChangePercent"
+      : "downloadsChangePercent";
   return `\n\n<b>${heading}</b>\n${leaders
-    .map(
-      (app, index) =>
-        `${index + 1}. ${formatInteger(
-          app[metric] ?? 0,
-          compactValues,
-        )} - ${abbreviatedTelegramAppName(app.name, maximumNameLength)}`,
-    )
+    .map((app, index) => {
+      const change = app[changeField];
+      const changeLabel =
+        change === undefined ? "" : ` (${change > 0 ? "+" : ""}${change}%)`;
+      return `${index + 1}. ${formatInteger(
+        app[metric] ?? 0,
+        compactValues,
+      )}${changeLabel} - ${abbreviatedTelegramAppName(
+        app.name,
+        maximumNameLength,
+      )}`;
+    })
     .join("\n")}`;
 }
 

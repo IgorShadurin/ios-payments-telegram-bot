@@ -64,6 +64,14 @@ proceeds and then impressions, and places at most 10 apps on each page. The
 portfolio summary appears only on page 1; global rank and a `Page N of M` label
 continue across every page.
 
+Every collected app is upserted into the SQLite metric history, including apps
+outside the Telegram Top 10 and apps whose current value is zero or pending.
+The numbered Top 10 Impressions and Top 10 Downloads caption compares each
+value with the same Minsk calendar day seven days earlier. A signed rounded
+percentage is shown only when the historical value exists and is greater than
+zero; missing and zero baselines are left unlabelled to avoid misleading growth
+figures for new apps.
+
 The metrics come from Apple's official Analytics Reports API:
 
 - **Impressions** match App Store Connect Analytics by combining `Impression`
@@ -147,7 +155,9 @@ metric and app, then totals all seven dates locally. The PNG uses a distinct
 `PREVIOUS WEEK` header, includes the full portfolio with at most 10 apps per
 page, and compacts values of 1,000 or more (`1k`, `2.5k`, and so on). Its
 Telegram caption uses a calendar icon and contains numbered Top 10 Impressions
-and Top 10 Downloads lists.
+and Top 10 Downloads lists. Weekly app metrics are stored for every app and
+compared with the immediately preceding Monday-through-Sunday week using the
+same safe percentage rule as the daily report.
 
 ```bash
 # Preview the previous completed week
