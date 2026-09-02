@@ -52,7 +52,7 @@ describe("daily report", () => {
     );
   });
 
-  it("uses a conservative complete-data date for scheduled reports", () => {
+  it("can still calculate a conservative complete-data date", () => {
     expect(DAILY_REPORT_LAG_DAYS).toBe(4);
     expect(latestCompleteCalendarDate(new Date("2026-09-02T16:00:00Z"))).toBe(
       "2026-08-29",

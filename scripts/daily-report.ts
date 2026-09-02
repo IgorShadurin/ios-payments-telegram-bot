@@ -16,7 +16,7 @@ import {
   DAILY_REPORT_TIME_ZONE,
   dailyReportCaption,
   deliveryNeedsCompleteRefresh,
-  latestCompleteCalendarDate,
+  previousCalendarDate,
   renderDailyReportPng,
 } from "../src/lib/daily-report";
 import { AppDatabase } from "../src/lib/database";
@@ -225,7 +225,7 @@ async function main(): Promise<void> {
   });
   const reportDate = values.date
     ? z.iso.date().parse(values.date)
-    : latestCompleteCalendarDate();
+    : previousCalendarDate();
   const outputPath = path.resolve(
     values.output ?? outputPathForDate(reportDate),
   );
@@ -242,6 +242,7 @@ async function main(): Promise<void> {
   try {
     const previous = database.getDailyReportDelivery(reportDate);
     const needsCompleteRefresh =
+      values.date !== undefined &&
       previous?.deliveryStatus === "delivered" &&
       previous.deliveredAt !== undefined &&
       deliveryNeedsCompleteRefresh(reportDate, previous.deliveredAt);
@@ -313,6 +314,20 @@ async function main(): Promise<void> {
         timeZone: DAILY_REPORT_TIME_ZONE,
         apps: metrics,
       };
+      const entirelyPendingMetrics = [
+        ["impressions", metrics.every((app) => app.impressions === undefined)],
+        ["downloads", metrics.every((app) => app.downloads === undefined)],
+        ["proceeds", metrics.every((app) => app.proceedsUsd === undefined)],
+      ]
+        .filter(([, pending]) => pending)
+        .map(([metric]) => metric);
+      if (entirelyPendingMetrics.length > 0) {
+        throw new Error(
+          `Apple has not published ${entirelyPendingMetrics.join(
+            ", ",
+          )} for ${reportDate}; retrying later`,
+        );
+      }
       const outputPaths = await renderDailyReportPng(report, outputPath);
       if (values["no-send"]) {
         console.log(JSON.stringify({ reportDate, outputPaths, sent: false }));

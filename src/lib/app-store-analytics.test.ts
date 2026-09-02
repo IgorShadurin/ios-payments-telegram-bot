@@ -247,9 +247,12 @@ describe("App Store analytics", () => {
   });
 
   it("keeps a metric pending until its complete processing partition exists", async () => {
+    const requestedProcessingDates: string[] = [];
     const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
       const url = new URL(String(input));
-      expect(url.searchParams.get("filter[processingDate]")).toBe("2026-08-27");
+      requestedProcessingDates.push(
+        url.searchParams.get("filter[processingDate]") ?? "",
+      );
       return Response.json({ data: [], links: {} });
     });
     const client = new AppStoreAnalyticsClient("secret", {
@@ -259,6 +262,85 @@ describe("App Store analytics", () => {
 
     await expect(
       client.readMetric("downloads-report", "downloads", "2026-08-25"),
+    ).resolves.toBeUndefined();
+    expect(requestedProcessingDates).toEqual(["2026-08-27", "2026-08-26"]);
+  });
+
+  it("uses the newest available preliminary partition for a recent date", async () => {
+    const compressed = gzipSync(
+      [
+        "Date\tEvent\tPage Type\tCounts",
+        "2026-08-31\tImpression\tNo page\t244",
+        "2026-08-31\tPage view\tProduct page\t9",
+        "",
+      ].join("\n"),
+    );
+    const requestedProcessingDates: string[] = [];
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.hostname === "reports.example.com") {
+        return new Response(new Uint8Array(compressed));
+      }
+      if (url.pathname.endsWith("/instances")) {
+        const processingDate =
+          url.searchParams.get("filter[processingDate]") ?? "";
+        requestedProcessingDates.push(processingDate);
+        return Response.json({
+          data:
+            processingDate === "2026-09-01"
+              ? [
+                  {
+                    type: "analyticsReportInstances",
+                    id: "instance-preliminary",
+                    attributes: {
+                      granularity: "DAILY",
+                      processingDate,
+                    },
+                  },
+                ]
+              : [],
+          links: {},
+        });
+      }
+      return Response.json({
+        data: [
+          {
+            type: "analyticsReportSegments",
+            id: "segment-1",
+            attributes: {
+              checksum: createHash("md5").update(compressed).digest("hex"),
+              sizeInBytes: compressed.length,
+              url: "https://reports.example.com/segment.tsv.gz",
+            },
+          },
+        ],
+        links: {},
+      });
+    });
+    const client = new AppStoreAnalyticsClient("secret", {
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+      now: () => new Date("2026-09-02T14:00:00Z"),
+    });
+
+    await expect(
+      client.readMetric("impressions-report", "impressions", "2026-08-31"),
+    ).resolves.toBe(253);
+    expect(requestedProcessingDates).toEqual(["2026-09-02", "2026-09-01"]);
+  });
+
+  it("keeps yesterday pending before Apple publishes its first partition", async () => {
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      expect(url.searchParams.get("filter[processingDate]")).toBe("2026-09-02");
+      return Response.json({ data: [], links: {} });
+    });
+    const client = new AppStoreAnalyticsClient("secret", {
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+      now: () => new Date("2026-09-02T14:00:00Z"),
+    });
+
+    await expect(
+      client.readMetric("impressions-report", "impressions", "2026-09-01"),
     ).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -273,6 +355,6 @@ describe("App Store analytics", () => {
     await expect(
       client.readMetric("downloads-report", "downloads", "2026-08-25"),
     ).resolves.toBe(0);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

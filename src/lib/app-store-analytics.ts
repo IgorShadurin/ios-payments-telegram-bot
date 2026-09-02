@@ -535,20 +535,30 @@ export class AppStoreAnalyticsClient {
     metric: AnalyticsMetric,
     reportDate: string,
   ): Promise<number | undefined> {
+    const firstProcessingDate = addUtcCalendarDays(reportDate, 1);
     const completeProcessingDate = addUtcCalendarDays(
       reportDate,
       ANALYTICS_COMPLETENESS_DAYS[metric],
     );
-    const [instance] = await this.listDailyInstances(
-      reportId,
-      completeProcessingDate,
-    );
-    if (!instance) {
-      const currentDate = this.now().toISOString().slice(0, 10);
-      return completeProcessingDate < currentDate ? 0 : undefined;
+    const currentDate = this.now().toISOString().slice(0, 10);
+    let processingDate =
+      currentDate < completeProcessingDate
+        ? currentDate
+        : completeProcessingDate;
+
+    while (processingDate >= firstProcessingDate) {
+      const [instance] = await this.listDailyInstances(
+        reportId,
+        processingDate,
+      );
+      if (instance) {
+        const rows = await this.downloadInstanceRows(instance.id);
+        return aggregateMetricRows(metric, rows, reportDate);
+      }
+      processingDate = addUtcCalendarDays(processingDate, -1);
     }
-    const rows = await this.downloadInstanceRows(instance.id);
-    return aggregateMetricRows(metric, rows, reportDate);
+
+    return completeProcessingDate < currentDate ? 0 : undefined;
   }
 }
 

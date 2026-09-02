@@ -55,14 +55,14 @@ token signed with an App Store Connect API key.
 
 ## Daily App Store portfolio report
 
-The daily report worker creates compact PNG pages for the latest reliably
-complete Apple analytics day and sends them to the configured Telegram chat as
-one album. At the 19:00 Minsk run this is four calendar days earlier, which
-ensures Apple's `D+3` engagement partition has already been published. It
-retrieves and totals every enabled registered app before rendering, sorts the
-full portfolio by estimated proceeds and then impressions, and places at
-most 10 apps on each page. The portfolio summary appears only on page 1; global
-rank and a `Page N of M` label continue across every page.
+The daily report worker creates compact PNG pages for the previous Minsk
+calendar day and sends them to the configured Telegram chat as
+one album. It uses the newest Apple partition available for that date, retries
+when Apple has not published an entire metric yet, retrieves and totals every
+enabled registered app before rendering, sorts the full portfolio by estimated
+proceeds and then impressions, and places at most 10 apps on each page. The
+portfolio summary appears only on page 1; global rank and a `Page N of M` label
+continue across every page.
 
 The metrics come from Apple's official Analytics Reports API:
 
@@ -76,11 +76,12 @@ The metrics come from Apple's official Analytics Reports API:
   Purchases Standard report, net of applicable taxes and Apple's commission.
 
 Apple considers downloads and proceeds complete within two days, and engagement
-within three days. The worker requests the corresponding complete processing
-partition for each metric. No row in a published complete partition means zero;
+within three days. The worker first requests the newest possible processing
+partition and falls back through earlier provisional partitions for the report
+date. No row in a published partition means zero;
 if Apple omits a no-activity instance after its processing day has passed, that
 also means zero. An orange marker and an em dash are reserved for a processing
-day that has not arrived yet.
+partition Apple has not published yet.
 
 Analytics report requests need one-time setup. Use an App Store Connect Admin
 API key for this command:
@@ -89,14 +90,18 @@ API key for this command:
 npm run analytics:setup:dev
 ```
 
-Apple normally produces the first ongoing reports 24-48 hours later. After
-setup, the daily worker can use an API key with the **Sales and Reports** role:
+Apple normally produces the first ongoing reports 24-48 hours later. Daily
+instances for the previous day are provisional and can be corrected for up to
+three days. The worker downloads the newest partition Apple has published for
+the report date and retries later when an entire metric is not yet published.
+After setup, the daily worker can use an API key with the **Sales and Reports**
+role:
 
 ```bash
 # Preview without Telegram delivery
 npm run report:daily:dev -- --no-send
 
-# Generate and send the latest complete-day PNG
+# Generate and send the previous-day PNG
 npm run report:daily:dev
 
 # Explicitly regenerate and resend a corrected historical date
