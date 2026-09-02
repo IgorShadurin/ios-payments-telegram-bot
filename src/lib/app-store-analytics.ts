@@ -127,6 +127,7 @@ export interface AppStoreAnalyticsClientOptions {
   fetchImplementation?: typeof fetch;
   wait?: (milliseconds: number) => Promise<unknown>;
   lowLimitPauseMs?: number;
+  now?: () => Date;
 }
 
 interface AnalyticsReportSummary {
@@ -275,6 +276,7 @@ export class AppStoreAnalyticsClient {
   private readonly fetchImplementation: typeof fetch;
   private readonly wait: (milliseconds: number) => Promise<unknown>;
   private readonly lowLimitPauseMs: number;
+  private readonly now: () => Date;
   private pauseBeforeNextRequestMs = 0;
 
   constructor(
@@ -285,6 +287,7 @@ export class AppStoreAnalyticsClient {
     this.wait = options.wait ?? delay;
     this.lowLimitPauseMs =
       options.lowLimitPauseMs ?? DEFAULT_LOW_LIMIT_PAUSE_MS;
+    this.now = options.now ?? (() => new Date());
   }
 
   private async requestJson(
@@ -540,7 +543,8 @@ export class AppStoreAnalyticsClient {
       completeProcessingDate,
     );
     if (!instance) {
-      return undefined;
+      const currentDate = this.now().toISOString().slice(0, 10);
+      return completeProcessingDate < currentDate ? 0 : undefined;
     }
     const rows = await this.downloadInstanceRows(instance.id);
     return aggregateMetricRows(metric, rows, reportDate);

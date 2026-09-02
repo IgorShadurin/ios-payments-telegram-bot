@@ -246,11 +246,25 @@ describe("App Store analytics", () => {
     });
     const client = new AppStoreAnalyticsClient("secret", {
       fetchImplementation: fetchMock as unknown as typeof fetch,
+      now: () => new Date("2026-08-27T16:00:00Z"),
     });
 
     await expect(
       client.readMetric("downloads-report", "downloads", "2026-08-25"),
     ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats an omitted mature partition as zero activity", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ data: [], links: {} }));
+    const client = new AppStoreAnalyticsClient("secret", {
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+      now: () => new Date("2026-08-28T00:00:00Z"),
+    });
+
+    await expect(
+      client.readMetric("downloads-report", "downloads", "2026-08-25"),
+    ).resolves.toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

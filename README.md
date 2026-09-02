@@ -76,8 +76,9 @@ The metrics come from Apple's official Analytics Reports API:
 Apple considers downloads and proceeds complete within two days, and engagement
 within three days. The worker requests the corresponding complete processing
 partition for each metric. No row in a published complete partition means zero;
-an orange marker and an em dash mean the required partition itself has not been
-published yet.
+if Apple omits a no-activity instance after its processing day has passed, that
+also means zero. An orange marker and an em dash are reserved for a processing
+day that has not arrived yet.
 
 Analytics report requests need one-time setup. Use an App Store Connect Admin
 API key for this command:
