@@ -109,8 +109,11 @@ the worker preserves that headroom and pauses for one hour before making
 another App Store Connect request.
 
 Daily report delivery is idempotent by report date. A successful Telegram
-album is not sent again. A failed run becomes retryable after 15 minutes, so a
-scheduled task can safely run at 19:00 and continue making catch-up attempts.
+album is not sent again. If an older bot version delivered that date before its
+complete-data day, the worker permits exactly one corrected refresh, then
+restores duplicate protection. A failed run becomes retryable after 15 minutes,
+so a scheduled task can safely run at 19:00 and continue making catch-up
+attempts.
 
 For a scheduler configured in `Europe/Minsk`, use this expression to start at
 19:00 and retry every 15 minutes through 21:45:

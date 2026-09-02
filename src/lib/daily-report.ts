@@ -126,6 +126,24 @@ export function latestCompleteCalendarDate(
   return complete.toISOString().slice(0, 10);
 }
 
+export function deliveryNeedsCompleteRefresh(
+  reportDate: string,
+  deliveredAt: number,
+  timeZone = DAILY_REPORT_TIME_ZONE,
+): boolean {
+  const firstSafeDelivery = new Date(`${reportDate}T12:00:00Z`);
+  firstSafeDelivery.setUTCDate(
+    firstSafeDelivery.getUTCDate() + DAILY_REPORT_LAG_DAYS,
+  );
+  const deliveredDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  }).format(new Date(deliveredAt));
+  return deliveredDate < firstSafeDelivery.toISOString().slice(0, 10);
+}
+
 export function sortDailyAppMetrics(
   apps: readonly DailyAppMetrics[],
 ): DailyAppMetrics[] {

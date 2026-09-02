@@ -14,6 +14,7 @@ import {
 } from "../src/lib/config";
 import {
   DAILY_REPORT_TIME_ZONE,
+  deliveryNeedsCompleteRefresh,
   latestCompleteCalendarDate,
   renderDailyReportPng,
   sortDailyAppMetrics,
@@ -261,9 +262,14 @@ async function main(): Promise<void> {
   }
   try {
     const previous = database.getDailyReportDelivery(reportDate);
+    const needsCompleteRefresh =
+      previous?.deliveryStatus === "delivered" &&
+      previous.deliveredAt !== undefined &&
+      deliveryNeedsCompleteRefresh(reportDate, previous.deliveredAt);
     if (
       shouldTrackDelivery &&
       !values["force-send"] &&
+      !needsCompleteRefresh &&
       previous?.deliveryStatus === "delivered"
     ) {
       console.log(
@@ -275,12 +281,21 @@ async function main(): Promise<void> {
       );
       return;
     }
+    if (shouldTrackDelivery && needsCompleteRefresh) {
+      console.log(
+        JSON.stringify({
+          refreshing: true,
+          reason: "previous_delivery_preceded_complete_partition",
+          reportDate,
+        }),
+      );
+    }
     if (
       shouldTrackDelivery &&
       !database.claimDailyReportDelivery(
         reportDate,
         outputPath,
-        values["force-send"],
+        values["force-send"] || needsCompleteRefresh,
       )
     ) {
       console.log(

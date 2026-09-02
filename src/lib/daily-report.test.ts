@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DAILY_REPORT_APPS_PER_PAGE,
   DAILY_REPORT_LAG_DAYS,
+  deliveryNeedsCompleteRefresh,
   latestCompleteCalendarDate,
   paginateDailyAppMetrics,
   previousCalendarDate,
@@ -57,6 +58,21 @@ describe("daily report", () => {
     expect(latestCompleteCalendarDate(new Date("2026-01-02T16:00:00Z"))).toBe(
       "2025-12-29",
     );
+  });
+
+  it("refreshes a report delivered before its complete-data day only once", () => {
+    expect(
+      deliveryNeedsCompleteRefresh(
+        "2026-08-29",
+        Date.parse("2026-08-30T16:00:00Z"),
+      ),
+    ).toBe(true);
+    expect(
+      deliveryNeedsCompleteRefresh(
+        "2026-08-29",
+        Date.parse("2026-09-02T16:00:00Z"),
+      ),
+    ).toBe(false);
   });
 
   it("sorts by revenue, then by product-page views, with pending values last", () => {
