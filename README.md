@@ -78,10 +78,10 @@ The metrics come from Apple's official Analytics Reports API:
 Apple considers downloads and proceeds complete within two days, and engagement
 within three days. The worker first requests the newest possible processing
 partition and falls back through earlier provisional partitions for the report
-date. No row in a published partition means zero;
-if Apple omits a no-activity instance after its processing day has passed, that
-also means zero. An orange marker and an em dash are reserved for a processing
-partition Apple has not published yet.
+date. Once Apple publishes a metric for the portfolio, an established app with
+that report but no instance is treated as zero activity. Apps whose ongoing
+request or report is not ready remain pending. An orange marker and an em dash
+are reserved for a processing partition Apple has not published yet.
 
 Analytics report requests need one-time setup. Use an App Store Connect Admin
 API key for this command:

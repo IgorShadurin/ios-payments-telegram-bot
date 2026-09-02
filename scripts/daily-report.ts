@@ -136,6 +136,10 @@ const sampleApps: DailyAppMetrics[] = [
   },
 ];
 
+type CollectedDailyAppMetrics = DailyAppMetrics & {
+  inferZeroWhenPortfolioPublished: Partial<Record<AnalyticsMetric, boolean>>;
+};
+
 function outputPathForDate(reportDate: string): string {
   const configured = process.env.DAILY_REPORT_OUTPUT_DIR?.trim();
   const directory =
@@ -148,7 +152,7 @@ async function collectApp(
   getSetupClient: () => AppStoreAnalyticsClient,
   app: RegisteredApp,
   reportDate: string,
-): Promise<DailyAppMetrics> {
+): Promise<CollectedDailyAppMetrics> {
   const metadata = await fetchPublicAppMetadata(app);
   const request = await client.ensureOngoingReportRequest(
     app.appAppleId,
@@ -166,16 +170,22 @@ async function collectApp(
       impressionsAvailability: "pending",
       downloadsAvailability: "pending",
       proceedsAvailability: "pending",
+      inferZeroWhenPortfolioPublished: {},
     };
   }
   const reports = await client.listRequiredReports(request.id);
   const values: Partial<Record<AnalyticsMetric, number>> = {};
+  const inferZeroWhenPortfolioPublished: Partial<
+    Record<AnalyticsMetric, boolean>
+  > = {};
   for (const metric of ["impressions", "downloads", "proceeds"] as const) {
     const report = reports[metric];
     if (report) {
       const value = await client.readMetric(report.id, metric, reportDate);
       if (value !== undefined) {
         values[metric] = value;
+      } else {
+        inferZeroWhenPortfolioPublished[metric] = true;
       }
     }
   }
@@ -193,7 +203,46 @@ async function collectApp(
       values.downloads === undefined ? "pending" : "available",
     proceedsAvailability:
       values.proceeds === undefined ? "pending" : "available",
+    inferZeroWhenPortfolioPublished,
   };
+}
+
+function inferZeroActivityAfterPortfolioPublication(
+  apps: CollectedDailyAppMetrics[],
+): void {
+  const fields = {
+    impressions: ["impressions", "impressionsAvailability"],
+    downloads: ["downloads", "downloadsAvailability"],
+    proceeds: ["proceedsUsd", "proceedsAvailability"],
+  } as const;
+  for (const [metric, [valueField, availabilityField]] of Object.entries(
+    fields,
+  ) as Array<
+    [
+      AnalyticsMetric,
+      readonly [
+        "impressions" | "downloads" | "proceedsUsd",
+        (
+          | "impressionsAvailability"
+          | "downloadsAvailability"
+          | "proceedsAvailability"
+        ),
+      ],
+    ]
+  >) {
+    if (!apps.some((app) => app[valueField] !== undefined)) {
+      continue;
+    }
+    for (const app of apps) {
+      if (
+        app[valueField] === undefined &&
+        app.inferZeroWhenPortfolioPublished[metric]
+      ) {
+        app[valueField] = 0;
+        app[availabilityField] = "available";
+      }
+    }
+  }
 }
 
 async function renderSample(
@@ -303,11 +352,12 @@ async function main(): Promise<void> {
         );
         return setupClient;
       };
-      const metrics: DailyAppMetrics[] = [];
+      const metrics: CollectedDailyAppMetrics[] = [];
       for (const app of apps) {
         metrics.push(await collectApp(client, getSetupClient, app, reportDate));
         console.log(`${app.bundleId}: analytics collected`);
       }
+      inferZeroActivityAfterPortfolioPublication(metrics);
       const report: DailyPortfolioReport = {
         reportDate,
         generatedAt: new Date().toISOString(),
