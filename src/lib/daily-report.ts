@@ -355,26 +355,26 @@ export async function renderDailyReportPng(
     const header = isFirstPage
       ? `
     <rect x="${SIDE}" y="40" width="${WIDTH - SIDE * 2}" height="294" rx="34" fill="url(#hero)"/>
-    <rect x="96" y="75" width="142" height="34" rx="17" fill="#064E3B"/>
-    <text x="167" y="98" text-anchor="middle" class="eyebrow" style="font-size:13px">${sampleLabel}</text>
+    <rect x="96" y="75" width="176" height="34" rx="17" fill="#064E3B"/>
+    <text x="184" y="98" text-anchor="middle" class="eyebrow" style="font-size:13px">${sampleLabel}</text>
     <rect x="975" y="75" width="135" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.1"/>
     <text x="1042" y="98" text-anchor="middle" class="pageNumber">${pageLabel}</text>
     <text x="96" y="159" class="title">App portfolio report</text>
-    <text x="96" y="198" class="date">${escapeXml(formatReportDate(report.reportDate))} · ${apps.length} public apps</text>
+    <text x="96" y="198" class="date">REPORT DATE · ${escapeXml(formatReportDate(report.reportDate))} · ${apps.length} public apps</text>
     <rect x="96" y="225" width="326" height="80" rx="20" fill="#FFFFFF" fill-opacity="0.07"/>
     <text x="119" y="251" class="summaryLabel">PRODUCT PAGE VIEWS</text>
     <text x="119" y="289" class="summaryValue">${totalViewsLabel}</text>
-    <text x="338" y="288" class="coverage">${availableViews}/${apps.length} ready</text>
+    <text x="398" y="288" text-anchor="end" class="coverage">${availableViews}/${apps.length} ready</text>
     <rect x="440" y="225" width="326" height="80" rx="20" fill="#FFFFFF" fill-opacity="0.07"/>
     <text x="463" y="251" class="summaryLabel">DOWNLOADS</text>
     <text x="463" y="289" class="summaryValue">${totalDownloadsLabel}</text>
-    <text x="682" y="288" class="coverage">${availableDownloads}/${apps.length} ready</text>
+    <text x="742" y="288" text-anchor="end" class="coverage">${availableDownloads}/${apps.length} ready</text>
     <rect x="784" y="225" width="326" height="80" rx="20" fill="#10B981" fill-opacity="0.15"/>
     <text x="807" y="251" class="summaryLabel" style="fill:#A7F3D0">EARNINGS · PROCEEDS</text>
     <text x="807" y="289" class="summaryValue">${totalProceedsLabel}</text>
-    <text x="1026" y="288" class="coverage">${availableProceeds}/${apps.length} ready</text>`
+    <text x="1086" y="288" text-anchor="end" class="coverage">${availableProceeds}/${apps.length} ready</text>`
       : `
-    <text x="${SIDE}" y="79" class="continuationDate">${escapeXml(formatReportDate(report.reportDate))}</text>
+    <text x="${SIDE}" y="79" class="continuationDate">REPORT DATE · ${escapeXml(formatReportDate(report.reportDate))}</text>
     <rect x="1031" y="49" width="145" height="46" rx="23" fill="#172033"/>
     <text x="1103" y="78" text-anchor="middle" class="pageNumber">${pageLabel}</text>
     <line x1="${SIDE}" y1="118" x2="${WIDTH - SIDE}" y2="118" stroke="#DCE3EC" stroke-width="2"/>`;
@@ -391,7 +391,7 @@ export async function renderDailyReportPng(
         .date { font-size: 21px; font-weight: 500; fill: #CBD5E1; }
         .summaryLabel { font-size: 15px; font-weight: 700; letter-spacing: 1.3px; fill: #94A3B8; }
         .summaryValue { font-size: 38px; font-weight: 760; fill: #FFFFFF; }
-        .coverage { font-size: 14px; font-weight: 600; fill: #94A3B8; }
+        .coverage { font-size: 13px; font-weight: 600; fill: #94A3B8; }
         .rank { font-size: 16px; font-weight: 800; fill: #FFFFFF; }
         .fallbackLetter { font-size: 47px; font-weight: 800; fill: #FFFFFF; }
         .appName { font-size: 24px; font-weight: 730; fill: #172033; }
