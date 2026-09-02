@@ -165,6 +165,70 @@ export function sortDailyAppMetrics(
   });
 }
 
+function abbreviatedTelegramAppName(
+  name: string,
+  maximumEscapedLength: number,
+): string {
+  const escapedName = escapeTelegramHtml(name);
+  if (escapedName.length <= maximumEscapedLength) {
+    return escapedName;
+  }
+  let abbreviated = "";
+  for (const character of name) {
+    const escapedCharacter = escapeTelegramHtml(character);
+    if (
+      abbreviated.length + escapedCharacter.length + 1 >
+      maximumEscapedLength
+    ) {
+      break;
+    }
+    abbreviated += escapedCharacter;
+  }
+  return `${abbreviated.trimEnd()}…`;
+}
+
+function metricLeaders(
+  apps: readonly DailyAppMetrics[],
+  metric: "impressions" | "downloads",
+): Array<DailyAppMetrics & Record<typeof metric, number>> {
+  return apps
+    .filter(
+      (app): app is DailyAppMetrics & Record<typeof metric, number> =>
+        app[metric] !== undefined,
+    )
+    .sort(
+      (left, right) =>
+        right[metric] - left[metric] ||
+        (right.impressions ?? Number.NEGATIVE_INFINITY) -
+          (left.impressions ?? Number.NEGATIVE_INFINITY) ||
+        left.name.localeCompare(right.name) ||
+        left.appAppleId - right.appAppleId,
+    )
+    .slice(0, 10);
+}
+
+function metricLeadersSection(
+  heading: string,
+  leaders: readonly (DailyAppMetrics & {
+    impressions?: number;
+    downloads?: number;
+  })[],
+  metric: "impressions" | "downloads",
+  maximumNameLength: number,
+): string {
+  if (leaders.length === 0) {
+    return "";
+  }
+  return `\n\n<b>${heading}</b>\n${leaders
+    .map(
+      (app, index) =>
+        `${index + 1}. ${new Intl.NumberFormat("en-US").format(
+          app[metric] ?? 0,
+        )} - ${abbreviatedTelegramAppName(app.name, maximumNameLength)}`,
+    )
+    .join("\n")}`;
+}
+
 export function dailyReportCaption(report: DailyPortfolioReport): string {
   const apps = sortDailyAppMetrics(report.apps);
   const revenue = apps.reduce((sum, app) => sum + (app.proceedsUsd ?? 0), 0);
@@ -178,33 +242,37 @@ export function dailyReportCaption(report: DailyPortfolioReport): string {
   );
   const pendingLine =
     pending > 0 ? `\n🟠 ${pending} metrics pending from Apple` : "";
-  const topImpressions = [...apps]
-    .filter(
-      (app): app is DailyAppMetrics & { impressions: number } =>
-        app.impressions !== undefined,
-    )
-    .sort(
-      (left, right) =>
-        right.impressions - left.impressions ||
-        left.name.localeCompare(right.name) ||
-        left.appAppleId - right.appAppleId,
-    )
-    .slice(0, 5);
-  const topImpressionsLine =
-    topImpressions.length > 0
-      ? `\n\n<b>Top Impressions</b>\n${topImpressions
-          .map(
-            (app) =>
-              `${new Intl.NumberFormat("en-US").format(app.impressions)} - ${escapeTelegramHtml(app.name)}`,
-          )
-          .join("\n")}`
-      : "";
-  return `<b>📊 Daily App Store report</b>\n${escapeTelegramHtml(report.reportDate)} · ${apps.length} apps · ${escapeTelegramHtml(
+  const topImpressions = metricLeaders(apps, "impressions");
+  const topDownloads = metricLeaders(apps, "downloads");
+  const heading = `<b>📊 Daily App Store report</b>\n${escapeTelegramHtml(report.reportDate)} · ${apps.length} apps · ${escapeTelegramHtml(
     new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
     }).format(revenue),
-  )} proceeds${pendingLine}${topImpressionsLine}`;
+  )} proceeds${pendingLine}`;
+  for (
+    let maximumNameLength = 100;
+    maximumNameLength >= 8;
+    maximumNameLength -= 1
+  ) {
+    const caption = `${heading}${metricLeadersSection(
+      "Top Impressions",
+      topImpressions,
+      "impressions",
+      maximumNameLength,
+    )}${metricLeadersSection(
+      "Top Downloads",
+      topDownloads,
+      "downloads",
+      maximumNameLength,
+    )}`;
+    if (caption.length <= 1_024) {
+      return caption;
+    }
+  }
+  throw new Error(
+    "Daily report caption exceeds Telegram's 1,024-character limit",
+  );
 }
 
 export function paginateDailyAppMetrics(

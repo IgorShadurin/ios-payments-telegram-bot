@@ -92,7 +92,7 @@ describe("daily report", () => {
     ]);
   });
 
-  it("adds the five highest-impression apps to the Telegram caption", () => {
+  it("adds numbered top-ten impression and download lists to the Telegram caption", () => {
     const apps = [
       app("Sixth", 1, 100),
       app("Third", 1, 300),
@@ -102,6 +102,9 @@ describe("daily report", () => {
       app("Second", 1, 390),
       app("Fourth", 1, 250),
     ];
+    apps.forEach((item, index) => {
+      item.downloads = index + 10;
+    });
 
     expect(
       dailyReportCaption({
@@ -115,12 +118,44 @@ describe("daily report", () => {
         "2026-08-29 · 7 apps · $7.00 proceeds\n" +
         "🟠 1 metrics pending from Apple\n\n" +
         "<b>Top Impressions</b>\n" +
-        "612 - First &amp; Best\n" +
-        "390 - Second\n" +
-        "300 - Third\n" +
-        "250 - Fourth\n" +
-        "200 - Fifth",
+        "1. 612 - First &amp; Best\n" +
+        "2. 390 - Second\n" +
+        "3. 300 - Third\n" +
+        "4. 250 - Fourth\n" +
+        "5. 200 - Fifth\n" +
+        "6. 100 - Sixth\n\n" +
+        "<b>Top Downloads</b>\n" +
+        "1. 16 - Fourth\n" +
+        "2. 15 - Second\n" +
+        "3. 14 - Fifth\n" +
+        "4. 13 - Pending\n" +
+        "5. 12 - First &amp; Best\n" +
+        "6. 11 - Third\n" +
+        "7. 10 - Sixth",
     );
+  });
+
+  it("keeps two top-ten lists within Telegram's caption limit", () => {
+    const apps = Array.from({ length: 25 }, (_, index) => {
+      const item = app(
+        `${"Very & Long App Name ".repeat(5)}${index}`,
+        1,
+        100 - index,
+      );
+      item.downloads = 200 - index;
+      return item;
+    });
+
+    const caption = dailyReportCaption({
+      reportDate: "2026-08-29",
+      generatedAt: "2026-09-02T16:00:00.000Z",
+      timeZone: "Europe/Minsk",
+      apps,
+    });
+    expect(caption.length).toBeLessThanOrEqual(1_024);
+    expect(caption).toContain("<b>Top Impressions</b>");
+    expect(caption).toContain("<b>Top Downloads</b>");
+    expect(caption).toContain("10. ");
   });
 
   it("renders a valid PNG without requiring an icon", async () => {
