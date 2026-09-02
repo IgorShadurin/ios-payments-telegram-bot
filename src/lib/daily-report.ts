@@ -4,6 +4,7 @@ import sharp from "sharp";
 import type { DailyAppMetrics, DailyPortfolioReport } from "./types";
 
 export const DAILY_REPORT_TIME_ZONE = "Europe/Minsk";
+export const DAILY_REPORT_LAG_DAYS = 4;
 
 const WIDTH = 1240;
 const CARD_HEIGHT = 174;
@@ -108,6 +109,21 @@ export function previousCalendarDate(
   const previous = new Date(`${today}T12:00:00Z`);
   previous.setUTCDate(previous.getUTCDate() - 1);
   return previous.toISOString().slice(0, 10);
+}
+
+export function latestCompleteCalendarDate(
+  now = new Date(),
+  timeZone = DAILY_REPORT_TIME_ZONE,
+): string {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  }).format(now);
+  const complete = new Date(`${today}T12:00:00Z`);
+  complete.setUTCDate(complete.getUTCDate() - DAILY_REPORT_LAG_DAYS);
+  return complete.toISOString().slice(0, 10);
 }
 
 export function sortDailyAppMetrics(
@@ -298,7 +314,7 @@ export async function renderDailyReportPng(
   const rankByAppleId = new Map(
     apps.map((app, index) => [app.appAppleId, index + 1]),
   );
-  const sampleLabel = report.isSample ? "SAMPLE DATA" : "PREVIOUS DAY";
+  const sampleLabel = report.isSample ? "SAMPLE DATA" : "COMPLETE DAY";
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true, mode: 0o750 });
   for (const [pageIndex, pageApps] of pages.entries()) {
@@ -376,7 +392,7 @@ export async function renderDailyReportPng(
     ${cards}
     <circle cx="80" cy="${height - 94}" r="5" fill="#F59E0B"/>
     <text x="96" y="${height - 89}" class="footer">Orange dots mean Apple has not published that metric yet.</text>
-    <text x="96" y="${height - 60}" class="footer">Previous-day analytics are provisional: downloads and proceeds settle within 2 days; product page views within 3 days.</text>
+    <text x="96" y="${height - 60}" class="footer">Uses Apple&apos;s complete daily partitions: downloads and proceeds at D+2; product page views at D+3.</text>
     <text x="96" y="${height - 29}" class="footer">Sorted by earnings, then product page views · Earnings are estimated proceeds in USD · Generated ${escapeXml(report.generatedAt)}</text>
   </svg>`;
 

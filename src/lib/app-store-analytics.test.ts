@@ -1,10 +1,17 @@
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ANALYTICS_REPORT_NAMES,
   AppStoreAnalyticsClient,
   aggregateMetricRows,
 } from "./app-store-analytics";
 
 describe("App Store analytics", () => {
+  it("uses Apple's API report name for downloads", () => {
+    expect(ANALYTICS_REPORT_NAMES.downloads).toBe("App Downloads Standard");
+  });
+
   it("aggregates product-page views, downloads excluding updates, and proceeds", () => {
     const views = [
       {
@@ -172,5 +179,78 @@ describe("App Store analytics", () => {
       readClient.ensureOngoingReportRequest(987654321, () => setupClient),
     ).resolves.toEqual({ id: "request-existing", created: false });
     expect(setupFetch).not.toHaveBeenCalled();
+  });
+
+  it("reads the completed processing partition and treats absent rows as zero", async () => {
+    const compressed = gzipSync(
+      [
+        "Date\tEvent\tPage Type\tCounts",
+        "2026-08-26\tPage view\tProduct page\t7",
+        "",
+      ].join("\n"),
+    );
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.hostname === "reports.example.com") {
+        return new Response(new Uint8Array(compressed));
+      }
+      if (url.pathname.endsWith("/instances")) {
+        expect(url.searchParams.get("filter[granularity]")).toBe("DAILY");
+        expect(url.searchParams.get("filter[processingDate]")).toBe(
+          "2026-08-28",
+        );
+        return Response.json({
+          data: [
+            {
+              type: "analyticsReportInstances",
+              id: "instance-complete",
+              attributes: {
+                granularity: "DAILY",
+                processingDate: "2026-08-28",
+              },
+            },
+          ],
+          links: {},
+        });
+      }
+      return Response.json({
+        data: [
+          {
+            type: "analyticsReportSegments",
+            id: "segment-1",
+            attributes: {
+              checksum: createHash("md5").update(compressed).digest("hex"),
+              sizeInBytes: compressed.length,
+              url: "https://reports.example.com/segment.tsv.gz",
+            },
+          },
+        ],
+        links: {},
+      });
+    });
+    const client = new AppStoreAnalyticsClient("secret", {
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.readMetric("views-report", "views", "2026-08-25"),
+    ).resolves.toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps a metric pending until its complete processing partition exists", async () => {
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      expect(url.searchParams.get("filter[processingDate]")).toBe("2026-08-27");
+      return Response.json({ data: [], links: {} });
+    });
+    const client = new AppStoreAnalyticsClient("secret", {
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.readMetric("downloads-report", "downloads", "2026-08-25"),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

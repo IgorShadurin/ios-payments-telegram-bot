@@ -637,10 +637,22 @@ export class AppDatabase {
   claimDailyReportDelivery(
     reportDate: string,
     imagePath: string,
+    forceRedelivery = false,
   ): StoredDailyReportDelivery | undefined {
     const now = Date.now();
     const staleLock = now - 90 * 60 * 1_000;
     return this.database.transaction(() => {
+      if (forceRedelivery) {
+        this.database
+          .prepare(
+            `UPDATE daily_report_deliveries
+             SET delivery_status = 'pending', next_attempt_at = ?,
+                 locked_at = NULL, last_error = NULL,
+                 telegram_message_id = NULL, delivered_at = NULL
+             WHERE report_date = ? AND delivery_status = 'delivered'`,
+          )
+          .run(now, reportDate);
+      }
       this.database
         .prepare(
           `INSERT INTO daily_report_deliveries (

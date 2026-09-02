@@ -14,7 +14,7 @@ import {
 } from "../src/lib/config";
 import {
   DAILY_REPORT_TIME_ZONE,
-  previousCalendarDate,
+  latestCompleteCalendarDate,
   renderDailyReportPng,
   sortDailyAppMetrics,
 } from "../src/lib/daily-report";
@@ -239,12 +239,13 @@ async function main(): Promise<void> {
       "no-send": { type: "boolean", default: false },
       date: { type: "string" },
       output: { type: "string" },
+      "force-send": { type: "boolean", default: false },
     },
     strict: true,
   });
   const reportDate = values.date
     ? z.iso.date().parse(values.date)
-    : previousCalendarDate();
+    : latestCompleteCalendarDate();
   const outputPath = path.resolve(
     values.output ?? outputPathForDate(reportDate),
   );
@@ -255,9 +256,16 @@ async function main(): Promise<void> {
 
   const database = new AppDatabase();
   const shouldTrackDelivery = !values["no-send"];
+  if (values["no-send"] && values["force-send"]) {
+    throw new Error("--force-send cannot be combined with --no-send");
+  }
   try {
     const previous = database.getDailyReportDelivery(reportDate);
-    if (shouldTrackDelivery && previous?.deliveryStatus === "delivered") {
+    if (
+      shouldTrackDelivery &&
+      !values["force-send"] &&
+      previous?.deliveryStatus === "delivered"
+    ) {
       console.log(
         JSON.stringify({
           skipped: true,
@@ -269,7 +277,11 @@ async function main(): Promise<void> {
     }
     if (
       shouldTrackDelivery &&
-      !database.claimDailyReportDelivery(reportDate, outputPath)
+      !database.claimDailyReportDelivery(
+        reportDate,
+        outputPath,
+        values["force-send"],
+      )
     ) {
       console.log(
         JSON.stringify({

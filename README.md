@@ -55,8 +55,10 @@ token signed with an App Store Connect API key.
 
 ## Daily App Store portfolio report
 
-The daily report worker creates compact PNG pages for the previous Minsk
-calendar day and sends them to the configured Telegram chat as one album. It
+The daily report worker creates compact PNG pages for the latest reliably
+complete Apple analytics day and sends them to the configured Telegram chat as
+one album. At the 19:00 Minsk run this is four calendar days earlier, which
+ensures Apple's `D+3` engagement partition has already been published. It
 retrieves and totals every enabled registered app before rendering, sorts the
 full portfolio by estimated proceeds and then product-page views, and places at
 most 10 apps on each page. The portfolio summary appears only on page 1; global
@@ -71,10 +73,11 @@ The metrics come from Apple's official Analytics Reports API:
 - **Earnings** are Apple's estimated `Proceeds in USD` from the App Store
   Purchases Standard report, net of applicable taxes and Apple's commission.
 
-Previous-day data can still change. Apple considers downloads and proceeds
-complete within two days, and engagement within three days. An orange marker
-and an em dash mean Apple has not published a metric yet; the worker never
-turns missing data into a misleading zero.
+Apple considers downloads and proceeds complete within two days, and engagement
+within three days. The worker requests the corresponding complete processing
+partition for each metric. No row in a published complete partition means zero;
+an orange marker and an em dash mean the required partition itself has not been
+published yet.
 
 Analytics report requests need one-time setup. Use an App Store Connect Admin
 API key for this command:
@@ -90,8 +93,11 @@ setup, the daily worker can use an API key with the **Sales and Reports** role:
 # Preview without Telegram delivery
 npm run report:daily:dev -- --no-send
 
-# Generate and send the previous-day PNG
+# Generate and send the latest complete-day PNG
 npm run report:daily:dev
+
+# Explicitly regenerate and resend a corrected historical date
+npm run report:daily:dev -- --date 2026-08-29 --force-send
 ```
 
 The worker validates every compressed analytics segment against Apple's size

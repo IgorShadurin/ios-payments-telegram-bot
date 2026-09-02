@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DAILY_REPORT_APPS_PER_PAGE,
+  DAILY_REPORT_LAG_DAYS,
+  latestCompleteCalendarDate,
   paginateDailyAppMetrics,
   previousCalendarDate,
   renderDailyReportPng,
@@ -44,6 +46,16 @@ describe("daily report", () => {
     );
     expect(previousCalendarDate(new Date("2026-01-01T16:00:00Z"))).toBe(
       "2025-12-31",
+    );
+  });
+
+  it("uses a conservative complete-data date for scheduled reports", () => {
+    expect(DAILY_REPORT_LAG_DAYS).toBe(4);
+    expect(latestCompleteCalendarDate(new Date("2026-09-02T16:00:00Z"))).toBe(
+      "2026-08-29",
+    );
+    expect(latestCompleteCalendarDate(new Date("2026-01-02T16:00:00Z"))).toBe(
+      "2025-12-29",
     );
   });
 

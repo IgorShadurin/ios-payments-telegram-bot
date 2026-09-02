@@ -159,6 +159,17 @@ describe("AppDatabase", () => {
     expect(
       database.claimDailyReportDelivery("2026-08-25", "/data/report.png"),
     ).toBeUndefined();
+
+    expect(
+      database.claimDailyReportDelivery(
+        "2026-08-25",
+        "/data/corrected-report.png",
+        true,
+      ),
+    ).toMatchObject({
+      deliveryStatus: "sending",
+      telegramMessageId: undefined,
+    });
   });
 
   it("stores review batches and does not alert for the initial baseline", () => {

@@ -100,9 +100,15 @@ const lookupSchema = z.object({
 
 export const ANALYTICS_REPORT_NAMES = {
   views: "App Store Discovery and Engagement Standard",
-  downloads: "App Store Downloads Standard",
+  downloads: "App Downloads Standard",
   proceeds: "App Store Purchases Standard",
 } as const;
+
+export const ANALYTICS_COMPLETENESS_DAYS = {
+  views: 3,
+  downloads: 2,
+  proceeds: 2,
+} as const satisfies Record<AnalyticsMetric, number>;
 
 export type AnalyticsMetric = keyof typeof ANALYTICS_REPORT_NAMES;
 
@@ -135,6 +141,12 @@ interface ReportInstanceSummary {
 
 interface TsvRow {
   [header: string]: string;
+}
+
+function addUtcCalendarDays(date: string, days: number): string {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
 }
 
 function retryAfterMs(header: string | null): number | undefined {
@@ -445,12 +457,16 @@ export class AppStoreAnalyticsClient {
 
   private async listDailyInstances(
     reportId: string,
+    processingDate?: string,
   ): Promise<ReportInstanceSummary[]> {
     const url = new URL(
       `/v1/analyticsReports/${encodeURIComponent(reportId)}/instances`,
       APP_STORE_CONNECT_ORIGIN,
     );
     url.searchParams.set("filter[granularity]", "DAILY");
+    if (processingDate) {
+      url.searchParams.set("filter[processingDate]", processingDate);
+    }
     url.searchParams.set("limit", "200");
     const instances = await this.collectPaginated(url, instancesSchema);
     return instances
@@ -515,14 +531,19 @@ export class AppStoreAnalyticsClient {
     metric: AnalyticsMetric,
     reportDate: string,
   ): Promise<number | undefined> {
-    const instances = await this.listDailyInstances(reportId);
-    for (const instance of instances.slice(0, 7)) {
-      const rows = await this.downloadInstanceRows(instance.id);
-      if (rows.some((row) => row.Date === reportDate)) {
-        return aggregateMetricRows(metric, rows, reportDate);
-      }
+    const completeProcessingDate = addUtcCalendarDays(
+      reportDate,
+      ANALYTICS_COMPLETENESS_DAYS[metric],
+    );
+    const [instance] = await this.listDailyInstances(
+      reportId,
+      completeProcessingDate,
+    );
+    if (!instance) {
+      return undefined;
     }
-    return undefined;
+    const rows = await this.downloadInstanceRows(instance.id);
+    return aggregateMetricRows(metric, rows, reportDate);
   }
 }
 
