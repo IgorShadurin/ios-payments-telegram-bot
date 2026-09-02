@@ -232,6 +232,8 @@ export function sortDailyAppMetrics(
   });
 }
 
+const MAX_DISPLAYED_INCREASE_PERCENT = 999;
+
 function percentageChange(
   current: number | undefined,
   previous: number | undefined,
@@ -239,32 +241,36 @@ function percentageChange(
   if (current === undefined || previous === undefined || previous <= 0) {
     return undefined;
   }
-  return Math.round(((current - previous) / previous) * 100);
+  const change = Math.round(((current - previous) / previous) * 100);
+  return change > MAX_DISPLAYED_INCREASE_PERCENT ? undefined : change;
 }
 
 export function addMetricComparisons(
   apps: readonly DailyAppMetrics[],
   previousApps: readonly DailyAppMetrics[],
+  comparisonPeriodStartDate?: string,
 ): DailyAppMetrics[] {
   const previousByAppleId = new Map(
     previousApps.map((app) => [app.appAppleId, app]),
   );
   return apps.map((app) => {
     const previous = previousByAppleId.get(app.appAppleId);
+    const firstReleaseDate = app.firstReleaseDate ?? previous?.firstReleaseDate;
+    const hasCompleteBaseline =
+      !comparisonPeriodStartDate ||
+      !firstReleaseDate ||
+      firstReleaseDate < comparisonPeriodStartDate;
     return {
       ...app,
-      impressionsChangePercent: percentageChange(
-        app.impressions,
-        previous?.impressions,
-      ),
-      downloadsChangePercent: percentageChange(
-        app.downloads,
-        previous?.downloads,
-      ),
-      proceedsChangePercent: percentageChange(
-        app.proceedsUsd,
-        previous?.proceedsUsd,
-      ),
+      impressionsChangePercent: hasCompleteBaseline
+        ? percentageChange(app.impressions, previous?.impressions)
+        : undefined,
+      downloadsChangePercent: hasCompleteBaseline
+        ? percentageChange(app.downloads, previous?.downloads)
+        : undefined,
+      proceedsChangePercent: hasCompleteBaseline
+        ? percentageChange(app.proceedsUsd, previous?.proceedsUsd)
+        : undefined,
     };
   });
 }

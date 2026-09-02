@@ -181,6 +181,7 @@ async function collectApp(
       name: metadata.name,
       bundleId: app.bundleId,
       iconUrl: metadata.iconUrl,
+      firstReleaseDate: metadata.firstReleaseDate,
       impressionsAvailability: "pending",
       downloadsAvailability: "pending",
       proceedsAvailability: "pending",
@@ -208,6 +209,7 @@ async function collectApp(
     name: metadata.name,
     bundleId: app.bundleId,
     iconUrl: metadata.iconUrl,
+    firstReleaseDate: metadata.firstReleaseDate,
     impressions: values.impressions,
     downloads: values.downloads,
     proceedsUsd: values.proceeds,
@@ -417,7 +419,7 @@ async function main(): Promise<void> {
         reportDate,
         generatedAt: new Date().toISOString(),
         timeZone: DAILY_REPORT_TIME_ZONE,
-        apps: addMetricComparisons(metrics, previousMetrics),
+        apps: addMetricComparisons(metrics, previousMetrics, comparisonDate),
       };
       const outputPaths = await renderDailyReportPng(report, outputPath);
       if (values["no-send"]) {

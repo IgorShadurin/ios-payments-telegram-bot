@@ -123,7 +123,7 @@ describe("database migrations", () => {
     migrated.close();
 
     const verified = new Database(databasePath, { readonly: true });
-    expect(verified.pragma("user_version", { simple: true })).toBe(8);
+    expect(verified.pragma("user_version", { simple: true })).toBe(9);
     verified.close();
   });
 });

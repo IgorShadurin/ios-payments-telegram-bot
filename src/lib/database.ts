@@ -129,6 +129,7 @@ interface PortfolioMetricSnapshotRow {
   app_apple_id: number;
   app_name: string;
   bundle_id: string;
+  first_release_date: string | null;
   impressions: number | null;
   downloads: number | null;
   proceeds_usd: number | null;
@@ -273,6 +274,7 @@ function mapPortfolioMetricSnapshot(
     appAppleId: row.app_apple_id,
     name: row.app_name,
     bundleId: row.bundle_id,
+    firstReleaseDate: row.first_release_date ?? undefined,
     impressions: row.impressions ?? undefined,
     downloads: row.downloads ?? undefined,
     proceedsUsd: row.proceeds_usd ?? undefined,
@@ -300,7 +302,7 @@ export class AppDatabase {
       simple: true,
     }) as number;
 
-    if (version > 8) {
+    if (version > 9) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -658,6 +660,18 @@ export class AppDatabase {
           PRAGMA user_version = 8;
         `);
       })();
+      version = 8;
+    }
+
+    if (version === 8) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          ALTER TABLE portfolio_metric_snapshots
+            ADD COLUMN first_release_date TEXT;
+
+          PRAGMA user_version = 9;
+        `);
+      })();
     }
   }
 
@@ -946,20 +960,49 @@ export class AppDatabase {
     const upsert = this.database.prepare(
       `INSERT INTO portfolio_metric_snapshots (
         report_kind, period_start_date, period_end_date, app_apple_id,
-        app_name, bundle_id, impressions, downloads, proceeds_usd,
+        app_name, bundle_id, first_release_date, impressions, downloads,
+        proceeds_usd,
         impressions_availability, downloads_availability,
         proceeds_availability, collected_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(report_kind, period_start_date, app_apple_id) DO UPDATE SET
         period_end_date = excluded.period_end_date,
         app_name = excluded.app_name,
         bundle_id = excluded.bundle_id,
-        impressions = excluded.impressions,
-        downloads = excluded.downloads,
-        proceeds_usd = excluded.proceeds_usd,
-        impressions_availability = excluded.impressions_availability,
-        downloads_availability = excluded.downloads_availability,
-        proceeds_availability = excluded.proceeds_availability,
+        first_release_date = COALESCE(
+          excluded.first_release_date,
+          portfolio_metric_snapshots.first_release_date
+        ),
+        impressions = COALESCE(
+          excluded.impressions,
+          portfolio_metric_snapshots.impressions
+        ),
+        downloads = COALESCE(
+          excluded.downloads,
+          portfolio_metric_snapshots.downloads
+        ),
+        proceeds_usd = COALESCE(
+          excluded.proceeds_usd,
+          portfolio_metric_snapshots.proceeds_usd
+        ),
+        impressions_availability = CASE
+          WHEN excluded.impressions IS NULL
+            AND portfolio_metric_snapshots.impressions IS NOT NULL
+          THEN portfolio_metric_snapshots.impressions_availability
+          ELSE excluded.impressions_availability
+        END,
+        downloads_availability = CASE
+          WHEN excluded.downloads IS NULL
+            AND portfolio_metric_snapshots.downloads IS NOT NULL
+          THEN portfolio_metric_snapshots.downloads_availability
+          ELSE excluded.downloads_availability
+        END,
+        proceeds_availability = CASE
+          WHEN excluded.proceeds_usd IS NULL
+            AND portfolio_metric_snapshots.proceeds_usd IS NOT NULL
+          THEN portfolio_metric_snapshots.proceeds_availability
+          ELSE excluded.proceeds_availability
+        END,
         collected_at = excluded.collected_at`,
     );
     this.database.transaction(() => {
@@ -971,6 +1014,7 @@ export class AppDatabase {
           app.appAppleId,
           app.name,
           app.bundleId,
+          app.firstReleaseDate ?? null,
           app.impressions ?? null,
           app.downloads ?? null,
           app.proceedsUsd ?? null,

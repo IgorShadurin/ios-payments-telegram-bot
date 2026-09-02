@@ -94,6 +94,7 @@ const lookupSchema = z.object({
       bundleId: z.string().min(1).max(255).optional(),
       artworkUrl512: z.string().url().optional(),
       artworkUrl100: z.string().url().optional(),
+      releaseDate: z.iso.datetime({ offset: true }).optional(),
     }),
   ),
 });
@@ -654,7 +655,7 @@ export class AppStoreAnalyticsClient {
 export async function fetchPublicAppMetadata(
   app: RegisteredApp,
   fetchImplementation: typeof fetch = fetch,
-): Promise<{ name: string; iconUrl?: string }> {
+): Promise<{ name: string; iconUrl?: string; firstReleaseDate?: string }> {
   const url = new URL("/lookup", ITUNES_LOOKUP_ORIGIN);
   url.searchParams.set("id", String(app.appAppleId));
   url.searchParams.set("entity", "software");
@@ -675,6 +676,7 @@ export async function fetchPublicAppMetadata(
       ? {
           name: match.trackName,
           iconUrl: match.artworkUrl512 ?? match.artworkUrl100,
+          firstReleaseDate: match.releaseDate?.slice(0, 10),
         }
       : { name: app.name };
   } catch {

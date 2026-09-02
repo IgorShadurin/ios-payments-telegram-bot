@@ -218,6 +218,33 @@ describe("daily report", () => {
     expect(caption).not.toContain("New App (");
   });
 
+  it("suppresses launch-period and extreme percentage spikes", () => {
+    const partialLaunch = app("Partial Launch", 0, 10_000);
+    partialLaunch.downloads = 500;
+    partialLaunch.firstReleaseDate = "2026-08-26";
+    const unreliableBaseline = app("Unreliable Baseline", 0, 1_000_000);
+    unreliableBaseline.downloads = 50_000;
+    const compared = addMetricComparisons(
+      [partialLaunch, unreliableBaseline],
+      [
+        { ...partialLaunch, impressions: 1, downloads: 1 },
+        { ...unreliableBaseline, impressions: 1, downloads: 1 },
+      ],
+      "2026-08-24",
+    );
+
+    expect(compared).toEqual([
+      expect.objectContaining({
+        impressionsChangePercent: undefined,
+        downloadsChangePercent: undefined,
+      }),
+      expect.objectContaining({
+        impressionsChangePercent: undefined,
+        downloadsChangePercent: undefined,
+      }),
+    ]);
+  });
+
   it("renders a valid PNG without requiring an icon", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "daily-report-"));
     directories.push(directory);

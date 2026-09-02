@@ -6,9 +6,44 @@ import {
   AppStoreAnalyticsClient,
   aggregateMetricRows,
   aggregateMetricRowsRange,
+  fetchPublicAppMetadata,
 } from "./app-store-analytics";
 
 describe("App Store analytics", () => {
+  it("returns Apple's first public release date with app metadata", async () => {
+    const metadata = await fetchPublicAppMetadata(
+      {
+        id: 1,
+        name: "Fallback",
+        bundleId: "com.example.app",
+        appAppleId: 123456789,
+        enabled: true,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      vi.fn(async () =>
+        Response.json({
+          resultCount: 1,
+          results: [
+            {
+              trackId: 123456789,
+              trackName: "Published App",
+              bundleId: "com.example.app",
+              artworkUrl100: "https://example.com/icon.png",
+              releaseDate: "2026-08-26T08:30:00Z",
+            },
+          ],
+        }),
+      ) as unknown as typeof fetch,
+    );
+
+    expect(metadata).toEqual({
+      name: "Published App",
+      iconUrl: "https://example.com/icon.png",
+      firstReleaseDate: "2026-08-26",
+    });
+  });
+
   it("uses Apple's API report name for downloads", () => {
     expect(ANALYTICS_REPORT_NAMES.downloads).toBe("App Downloads Standard");
   });

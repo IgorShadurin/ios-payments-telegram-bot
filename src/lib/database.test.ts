@@ -206,6 +206,7 @@ describe("AppDatabase", () => {
         appAppleId: 123456789,
         name: "Available",
         bundleId: "com.example.available",
+        firstReleaseDate: "2026-08-01",
         impressions: 100,
         downloads: 10,
         proceedsUsd: 2.5,
@@ -232,6 +233,7 @@ describe("AppDatabase", () => {
     expect(database.getPortfolioMetrics("daily", "2026-08-25")).toEqual([
       expect.objectContaining({
         name: "Available",
+        firstReleaseDate: "2026-08-01",
         impressions: 100,
         collectedAt: 1_000,
       }),
@@ -254,6 +256,39 @@ describe("AppDatabase", () => {
         .getPortfolioMetrics("daily", "2026-08-25")
         .find((item) => item.appAppleId === 123456789),
     ).toMatchObject({ impressions: 120, collectedAt: 2_000 });
+
+    database.storePortfolioMetrics(
+      "daily",
+      "2026-08-25",
+      "2026-08-25",
+      [
+        {
+          ...apps[0],
+          firstReleaseDate: undefined,
+          impressions: undefined,
+          downloads: undefined,
+          proceedsUsd: undefined,
+          impressionsAvailability: "pending",
+          downloadsAvailability: "pending",
+          proceedsAvailability: "pending",
+        },
+      ],
+      3_000,
+    );
+    expect(
+      database
+        .getPortfolioMetrics("daily", "2026-08-25")
+        .find((item) => item.appAppleId === 123456789),
+    ).toMatchObject({
+      firstReleaseDate: "2026-08-01",
+      impressions: 120,
+      downloads: 10,
+      proceedsUsd: 2.5,
+      impressionsAvailability: "available",
+      downloadsAvailability: "available",
+      proceedsAvailability: "available",
+      collectedAt: 3_000,
+    });
   });
 
   it("stores review batches and does not alert for the initial baseline", () => {

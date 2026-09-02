@@ -142,6 +142,7 @@ export interface DailyAppMetrics {
   name: string;
   bundleId: string;
   iconUrl?: string;
+  firstReleaseDate?: string;
   impressions?: number;
   downloads?: number;
   proceedsUsd?: number;

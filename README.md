@@ -68,9 +68,11 @@ Every collected app is upserted into the SQLite metric history, including apps
 outside the Telegram Top 10 and apps whose current value is zero or pending.
 The numbered Top 10 Impressions and Top 10 Downloads caption compares each
 value with the same Minsk calendar day seven days earlier. A signed rounded
-percentage is shown only when the historical value exists and is greater than
-zero; missing and zero baselines are left unlabelled to avoid misleading growth
-figures for new apps.
+percentage is shown only when the historical value exists, is greater than
+zero, and the app was public before the complete comparison period. Missing,
+zero, and partial launch-period baselines are left unlabelled. Increases above
+999% are also omitted defensively when release metadata is unavailable or
+inconsistent. Raw metrics are still stored unchanged for every app.
 
 The metrics come from Apple's official Analytics Reports API:
 
