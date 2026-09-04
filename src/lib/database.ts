@@ -13,6 +13,7 @@ import type {
   StoredCustomerReview,
   StoredCustomerReviewWithApp,
   StoredDailyReportDelivery,
+  StoredMonthlyReportDelivery,
   StoredNotification,
   StoredPortfolioMetricSnapshot,
   StoredTelegramOutboxMessage,
@@ -112,6 +113,20 @@ interface WeeklyReportDeliveryRow {
   week_start_date: string;
   week_end_date: string;
   delivery_status: StoredWeeklyReportDelivery["deliveryStatus"];
+  delivery_attempts: number;
+  next_attempt_at: number;
+  locked_at: number | null;
+  image_path: string;
+  last_error: string | null;
+  telegram_message_id: number | null;
+  created_at: number;
+  delivered_at: number | null;
+}
+
+interface MonthlyReportDeliveryRow {
+  month_start_date: string;
+  month_end_date: string;
+  delivery_status: StoredMonthlyReportDelivery["deliveryStatus"];
   delivery_attempts: number;
   next_attempt_at: number;
   locked_at: number | null;
@@ -264,6 +279,23 @@ function mapWeeklyReportDelivery(
   };
 }
 
+function mapMonthlyReportDelivery(
+  row: MonthlyReportDeliveryRow,
+): StoredMonthlyReportDelivery {
+  return {
+    monthStartDate: row.month_start_date,
+    monthEndDate: row.month_end_date,
+    deliveryStatus: row.delivery_status,
+    deliveryAttempts: row.delivery_attempts,
+    nextAttemptAt: row.next_attempt_at,
+    imagePath: row.image_path,
+    lastError: row.last_error ?? undefined,
+    telegramMessageId: row.telegram_message_id ?? undefined,
+    createdAt: row.created_at,
+    deliveredAt: row.delivered_at ?? undefined,
+  };
+}
+
 function mapPortfolioMetricSnapshot(
   row: PortfolioMetricSnapshotRow,
 ): StoredPortfolioMetricSnapshot {
@@ -302,7 +334,7 @@ export class AppDatabase {
       simple: true,
     }) as number;
 
-    if (version > 9) {
+    if (version > 10) {
       throw new Error(
         `Database schema ${version} is newer than this application supports`,
       );
@@ -672,6 +704,82 @@ export class AppDatabase {
           PRAGMA user_version = 9;
         `);
       })();
+      version = 9;
+    }
+
+    if (version === 9) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE monthly_report_deliveries (
+            month_start_date TEXT PRIMARY KEY
+              CHECK (month_start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-01'),
+            month_end_date TEXT NOT NULL
+              CHECK (month_end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            delivery_status TEXT NOT NULL DEFAULT 'pending'
+              CHECK (delivery_status IN ('pending', 'sending', 'retry', 'delivered')),
+            delivery_attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL,
+            locked_at INTEGER,
+            image_path TEXT NOT NULL,
+            last_error TEXT,
+            telegram_message_id INTEGER,
+            created_at INTEGER NOT NULL,
+            delivered_at INTEGER
+          );
+
+          CREATE INDEX monthly_report_deliveries_due_idx
+            ON monthly_report_deliveries(delivery_status, next_attempt_at);
+
+          DROP INDEX portfolio_metric_snapshots_period_idx;
+          ALTER TABLE portfolio_metric_snapshots
+            RENAME TO portfolio_metric_snapshots_v9;
+
+          CREATE TABLE portfolio_metric_snapshots (
+            report_kind TEXT NOT NULL
+              CHECK (report_kind IN ('daily', 'weekly', 'monthly')),
+            period_start_date TEXT NOT NULL
+              CHECK (period_start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            period_end_date TEXT NOT NULL
+              CHECK (period_end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            app_apple_id INTEGER NOT NULL,
+            app_name TEXT NOT NULL,
+            bundle_id TEXT NOT NULL,
+            impressions INTEGER,
+            downloads INTEGER,
+            proceeds_usd REAL,
+            impressions_availability TEXT NOT NULL
+              CHECK (impressions_availability IN ('available', 'pending')),
+            downloads_availability TEXT NOT NULL
+              CHECK (downloads_availability IN ('available', 'pending')),
+            proceeds_availability TEXT NOT NULL
+              CHECK (proceeds_availability IN ('available', 'pending')),
+            collected_at INTEGER NOT NULL,
+            first_release_date TEXT,
+            PRIMARY KEY (report_kind, period_start_date, app_apple_id)
+          );
+
+          INSERT INTO portfolio_metric_snapshots (
+            report_kind, period_start_date, period_end_date, app_apple_id,
+            app_name, bundle_id, impressions, downloads, proceeds_usd,
+            impressions_availability, downloads_availability,
+            proceeds_availability, collected_at, first_release_date
+          )
+          SELECT
+            report_kind, period_start_date, period_end_date, app_apple_id,
+            app_name, bundle_id, impressions, downloads, proceeds_usd,
+            impressions_availability, downloads_availability,
+            proceeds_availability, collected_at, first_release_date
+          FROM portfolio_metric_snapshots_v9;
+
+          DROP TABLE portfolio_metric_snapshots_v9;
+          CREATE INDEX portfolio_metric_snapshots_period_idx
+            ON portfolio_metric_snapshots(
+              report_kind, period_start_date, period_end_date
+            );
+
+          PRAGMA user_version = 10;
+        `);
+      })();
     }
   }
 
@@ -948,6 +1056,95 @@ export class AppDatabase {
          WHERE week_start_date = ? AND delivery_status = 'sending'`,
       )
       .run(nextAttemptAt, error.slice(0, 500), weekStartDate);
+  }
+
+  getMonthlyReportDelivery(
+    monthStartDate: string,
+  ): StoredMonthlyReportDelivery | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT * FROM monthly_report_deliveries WHERE month_start_date = ?",
+      )
+      .get(monthStartDate) as MonthlyReportDeliveryRow | undefined;
+    return row ? mapMonthlyReportDelivery(row) : undefined;
+  }
+
+  claimMonthlyReportDelivery(
+    monthStartDate: string,
+    monthEndDate: string,
+    imagePath: string,
+    forceRedelivery = false,
+  ): StoredMonthlyReportDelivery | undefined {
+    const now = Date.now();
+    const staleLock = now - 90 * 60 * 1_000;
+    return this.database.transaction(() => {
+      if (forceRedelivery) {
+        this.database
+          .prepare(
+            `UPDATE monthly_report_deliveries
+             SET delivery_status = 'pending', next_attempt_at = ?,
+                 locked_at = NULL, last_error = NULL,
+                 telegram_message_id = NULL, delivered_at = NULL
+             WHERE month_start_date = ? AND delivery_status = 'delivered'`,
+          )
+          .run(now, monthStartDate);
+      }
+      this.database
+        .prepare(
+          `INSERT INTO monthly_report_deliveries (
+            month_start_date, month_end_date, delivery_status,
+            next_attempt_at, image_path, created_at
+          ) VALUES (?, ?, 'pending', ?, ?, ?)
+          ON CONFLICT(month_start_date) DO NOTHING`,
+        )
+        .run(monthStartDate, monthEndDate, now, imagePath, now);
+      const result = this.database
+        .prepare(
+          `UPDATE monthly_report_deliveries
+           SET delivery_status = 'sending', locked_at = ?, image_path = ?
+           WHERE month_start_date = ? AND month_end_date = ?
+             AND (
+               (delivery_status IN ('pending', 'retry') AND next_attempt_at <= ?)
+               OR (delivery_status = 'sending' AND locked_at < ?)
+             )`,
+        )
+        .run(now, imagePath, monthStartDate, monthEndDate, now, staleLock);
+      return result.changes === 1
+        ? this.getMonthlyReportDelivery(monthStartDate)
+        : undefined;
+    })();
+  }
+
+  markMonthlyReportDelivered(
+    monthStartDate: string,
+    telegramMessageId: number,
+  ): void {
+    this.database
+      .prepare(
+        `UPDATE monthly_report_deliveries
+         SET delivery_status = 'delivered',
+             delivery_attempts = delivery_attempts + 1,
+             telegram_message_id = ?, delivered_at = ?, locked_at = NULL,
+             last_error = NULL
+         WHERE month_start_date = ? AND delivery_status = 'sending'`,
+      )
+      .run(telegramMessageId, Date.now(), monthStartDate);
+  }
+
+  markMonthlyReportForRetry(
+    monthStartDate: string,
+    error: string,
+    nextAttemptAt: number,
+  ): void {
+    this.database
+      .prepare(
+        `UPDATE monthly_report_deliveries
+         SET delivery_status = 'retry',
+             delivery_attempts = delivery_attempts + 1,
+             next_attempt_at = ?, locked_at = NULL, last_error = ?
+         WHERE month_start_date = ? AND delivery_status = 'sending'`,
+      )
+      .run(nextAttemptAt, error.slice(0, 500), monthStartDate);
   }
 
   storePortfolioMetrics(

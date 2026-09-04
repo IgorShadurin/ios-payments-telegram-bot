@@ -9,10 +9,13 @@ import {
   dailyReportCaption,
   deliveryNeedsCompleteRefresh,
   latestCompleteCalendarDate,
+  monthlyReportCaption,
   paginateDailyAppMetrics,
   previousCalendarDate,
+  previousCompletedMonth,
   previousCompletedWeek,
   renderDailyReportPng,
+  renderMonthlyReportPng,
   renderWeeklyReportPng,
   sortDailyAppMetrics,
   weeklyReportCaption,
@@ -64,6 +67,17 @@ describe("daily report", () => {
     expect(previousCompletedWeek(new Date("2026-09-07T06:00:00Z"))).toEqual({
       startDate: "2026-08-31",
       endDate: "2026-09-06",
+    });
+  });
+
+  it("uses the previous complete calendar month", () => {
+    expect(previousCompletedMonth(new Date("2026-09-04T16:00:00Z"))).toEqual({
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+    });
+    expect(previousCompletedMonth(new Date("2026-01-04T16:00:00Z"))).toEqual({
+      startDate: "2025-12-01",
+      endDate: "2025-12-31",
     });
   });
 
@@ -188,6 +202,23 @@ describe("daily report", () => {
     expect(caption).toContain("$2.5k proceeds");
     expect(caption).toContain("1. 2.5k - Weekly Leader");
     expect(caption).toContain("1. 1.2k - Weekly Leader");
+  });
+
+  it("formats a compact numbered monthly Telegram caption", () => {
+    const leader = app("Monthly Leader", 12_500, 25_000);
+    leader.downloads = 2_400;
+    const caption = monthlyReportCaption({
+      monthStartDate: "2026-08-01",
+      monthEndDate: "2026-08-31",
+      generatedAt: "2026-09-04T16:00:00.000Z",
+      timeZone: "Europe/Minsk",
+      apps: [leader],
+    });
+    expect(caption).toContain("<b>📅 Monthly App Store report</b>");
+    expect(caption).toContain("2026-08-01 – 2026-08-31");
+    expect(caption).toContain("$12.5k proceeds");
+    expect(caption).toContain("1. 25k - Monthly Leader");
+    expect(caption).toContain("1. 2.4k - Monthly Leader");
   });
 
   it("adds safe percentage changes and omits zero or missing baselines", () => {
@@ -328,6 +359,32 @@ describe("daily report", () => {
     ).toMatchObject({
       weekStartDate: "2026-08-24",
       weekEndDate: "2026-08-30",
+      appCount: 1,
+    });
+  });
+
+  it("renders a monthly report with its date range in the manifest", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "monthly-report-"));
+    directories.push(directory);
+    const outputPath = path.join(directory, "monthly.png");
+    const paths = await renderMonthlyReportPng(
+      {
+        monthStartDate: "2026-08-01",
+        monthEndDate: "2026-08-31",
+        generatedAt: "2026-09-04T16:00:00.000Z",
+        timeZone: "Europe/Minsk",
+        apps: [app("Monthly Example", 2_500, 22_500)],
+      },
+      outputPath,
+    );
+    expect(paths).toEqual([outputPath]);
+    expect(
+      JSON.parse(
+        readFileSync(path.join(directory, "monthly.manifest.json"), "utf8"),
+      ),
+    ).toMatchObject({
+      monthStartDate: "2026-08-01",
+      monthEndDate: "2026-08-31",
       appCount: 1,
     });
   });

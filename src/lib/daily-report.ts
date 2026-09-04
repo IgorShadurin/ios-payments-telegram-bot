@@ -5,6 +5,7 @@ import { escapeTelegramHtml } from "./message";
 import type {
   DailyAppMetrics,
   DailyPortfolioReport,
+  MonthlyPortfolioReport,
   WeeklyPortfolioReport,
 } from "./types";
 
@@ -175,6 +176,25 @@ export function previousCompletedWeek(
   end.setUTCDate(end.getUTCDate() - 1);
   return {
     startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  };
+}
+
+export function previousCompletedMonth(
+  now = new Date(),
+  timeZone = DAILY_REPORT_TIME_ZONE,
+): { startDate: string; endDate: string } {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  }).format(now);
+  const currentMonth = new Date(`${today.slice(0, 7)}-01T12:00:00Z`);
+  const end = new Date(currentMonth);
+  end.setUTCDate(0);
+  return {
+    startDate: `${end.toISOString().slice(0, 7)}-01`,
     endDate: end.toISOString().slice(0, 10),
   };
 }
@@ -440,6 +460,53 @@ export function weeklyReportCaption(report: WeeklyPortfolioReport): string {
   }
   throw new Error(
     "Weekly report caption exceeds Telegram's 1,024-character limit",
+  );
+}
+
+export function monthlyReportCaption(report: MonthlyPortfolioReport): string {
+  const apps = sortDailyAppMetrics(report.apps);
+  const revenue = apps.reduce((sum, app) => sum + (app.proceedsUsd ?? 0), 0);
+  const pending = apps.reduce(
+    (sum, app) =>
+      sum +
+      [app.impressions, app.downloads, app.proceedsUsd].filter(
+        (value) => value === undefined,
+      ).length,
+    0,
+  );
+  const pendingLine =
+    pending > 0 ? `\n🟠 ${pending} metrics pending from Apple` : "";
+  const topImpressions = metricLeaders(apps, "impressions");
+  const topDownloads = metricLeaders(apps, "downloads");
+  const heading = `<b>📅 Monthly App Store report</b>\n${escapeTelegramHtml(
+    `${report.monthStartDate} – ${report.monthEndDate}`,
+  )} · ${apps.length} apps · ${escapeTelegramHtml(
+    formatUsd(revenue, true),
+  )} proceeds${pendingLine}`;
+  for (
+    let maximumNameLength = 100;
+    maximumNameLength >= 8;
+    maximumNameLength -= 1
+  ) {
+    const caption = `${heading}${metricLeadersSection(
+      "Top Impressions",
+      topImpressions,
+      "impressions",
+      maximumNameLength,
+      true,
+    )}${metricLeadersSection(
+      "Top Downloads",
+      topDownloads,
+      "downloads",
+      maximumNameLength,
+      true,
+    )}`;
+    if (caption.length <= 1_024) {
+      return caption;
+    }
+  }
+  throw new Error(
+    "Monthly report caption exceeds Telegram's 1,024-character limit",
   );
 }
 
@@ -786,6 +853,40 @@ export async function renderWeeklyReportPng(
       manifestPeriod: {
         weekStartDate: report.weekStartDate,
         weekEndDate: report.weekEndDate,
+      },
+    },
+  );
+}
+
+export async function renderMonthlyReportPng(
+  report: MonthlyPortfolioReport,
+  outputPath: string,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<string[]> {
+  return renderPortfolioReportPng(
+    {
+      reportDate: report.monthEndDate,
+      generatedAt: report.generatedAt,
+      timeZone: report.timeZone,
+      apps: report.apps,
+      isSample: report.isSample,
+    },
+    outputPath,
+    fetchImplementation,
+    {
+      title: "Monthly portfolio report",
+      periodLabel: "PREVIOUS MONTH",
+      periodPrefix: "MONTH",
+      periodText: formatReportPeriod(
+        report.monthStartDate,
+        report.monthEndDate,
+      ),
+      compactValues: true,
+      availabilityFooter:
+        "Aggregated from Apple's latest daily partitions for the complete calendar month.",
+      manifestPeriod: {
+        monthStartDate: report.monthStartDate,
+        monthEndDate: report.monthEndDate,
       },
     },
   );

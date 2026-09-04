@@ -123,7 +123,75 @@ describe("database migrations", () => {
     migrated.close();
 
     const verified = new Database(databasePath, { readonly: true });
-    expect(verified.pragma("user_version", { simple: true })).toBe(9);
+    expect(verified.pragma("user_version", { simple: true })).toBe(10);
+    verified.close();
+  });
+
+  it("preserves metric history while adding monthly snapshots", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "monthly-migration-"));
+    directories.push(directory);
+    const databasePath = path.join(directory, "metrics-v9.sqlite");
+    const legacy = new Database(databasePath);
+    legacy.exec(`
+      CREATE TABLE portfolio_metric_snapshots (
+        report_kind TEXT NOT NULL
+          CHECK (report_kind IN ('daily', 'weekly')),
+        period_start_date TEXT NOT NULL,
+        period_end_date TEXT NOT NULL,
+        app_apple_id INTEGER NOT NULL,
+        app_name TEXT NOT NULL,
+        bundle_id TEXT NOT NULL,
+        impressions INTEGER,
+        downloads INTEGER,
+        proceeds_usd REAL,
+        impressions_availability TEXT NOT NULL,
+        downloads_availability TEXT NOT NULL,
+        proceeds_availability TEXT NOT NULL,
+        collected_at INTEGER NOT NULL,
+        first_release_date TEXT,
+        PRIMARY KEY (report_kind, period_start_date, app_apple_id)
+      );
+      CREATE INDEX portfolio_metric_snapshots_period_idx
+        ON portfolio_metric_snapshots(
+          report_kind, period_start_date, period_end_date
+        );
+      INSERT INTO portfolio_metric_snapshots VALUES (
+        'weekly', '2026-08-24', '2026-08-30', 123456789,
+        'Existing App', 'com.example.existing', 100, 10, 2.5,
+        'available', 'available', 'available', 1000, '2026-08-01'
+      );
+      PRAGMA user_version = 9;
+    `);
+    legacy.close();
+
+    const migrated = new AppDatabase(databasePath);
+    expect(migrated.getPortfolioMetrics("weekly", "2026-08-24")).toEqual([
+      expect.objectContaining({
+        name: "Existing App",
+        impressions: 100,
+        firstReleaseDate: "2026-08-01",
+      }),
+    ]);
+    migrated.storePortfolioMetrics("monthly", "2026-08-01", "2026-08-31", [
+      {
+        appAppleId: 123456789,
+        name: "Existing App",
+        bundleId: "com.example.existing",
+        impressions: 300,
+        downloads: 30,
+        proceedsUsd: 7.5,
+        impressionsAvailability: "available",
+        downloadsAvailability: "available",
+        proceedsAvailability: "available",
+      },
+    ]);
+    expect(migrated.getPortfolioMetrics("monthly", "2026-08-01")).toHaveLength(
+      1,
+    );
+    migrated.close();
+
+    const verified = new Database(databasePath, { readonly: true });
+    expect(verified.pragma("user_version", { simple: true })).toBe(10);
     verified.close();
   });
 });

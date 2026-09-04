@@ -262,6 +262,35 @@ describe("App Store analytics", () => {
     });
   });
 
+  it("creates a one-time snapshot request for historical analytics", async () => {
+    const fetchMock = vi.fn(
+      async (_input: URL | RequestInfo, _init?: RequestInit) =>
+        Response.json({
+          data: {
+            type: "analyticsReportRequests",
+            id: "snapshot-new",
+            attributes: { accessType: "ONE_TIME_SNAPSHOT" },
+          },
+        }),
+    );
+    const client = new AppStoreAnalyticsClient("secret", {
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.createOneTimeSnapshotReportRequest(987654321),
+    ).resolves.toBe("snapshot-new");
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body).toMatchObject({
+      data: {
+        attributes: { accessType: "ONE_TIME_SNAPSHOT" },
+        relationships: {
+          app: { data: { type: "apps", id: "987654321" } },
+        },
+      },
+    });
+  });
+
   it("creates a missing ongoing request through the Admin setup client", async () => {
     const readFetch = vi.fn(async () => Response.json({ data: [], links: {} }));
     const setupFetch = vi.fn(async () =>
@@ -454,6 +483,66 @@ describe("App Store analytics", () => {
       client.readMetric("impressions-report", "impressions", "2026-08-31"),
     ).resolves.toBe(253);
     expect(requestedProcessingDates).toEqual(["2026-09-02", "2026-09-01"]);
+  });
+
+  it("aggregates a historical month from the latest snapshot partition", async () => {
+    const compressed = gzipSync(
+      [
+        "Date\tEvent\tPage Type\tCounts",
+        "2026-08-01\tImpression\tNo page\t100",
+        "2026-08-31\tImpression\tNo page\t200",
+        "2026-09-01\tImpression\tNo page\t999",
+        "",
+      ].join("\n"),
+    );
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.hostname === "reports.example.com") {
+        return new Response(new Uint8Array(compressed));
+      }
+      if (url.pathname.endsWith("/instances")) {
+        expect(url.searchParams.get("filter[granularity]")).toBe("DAILY");
+        return Response.json({
+          data: [
+            {
+              type: "analyticsReportInstances",
+              id: "snapshot-instance",
+              attributes: {
+                granularity: "DAILY",
+                processingDate: "2026-09-04",
+              },
+            },
+          ],
+          links: {},
+        });
+      }
+      return Response.json({
+        data: [
+          {
+            type: "analyticsReportSegments",
+            id: "snapshot-segment",
+            attributes: {
+              checksum: createHash("md5").update(compressed).digest("hex"),
+              sizeInBytes: compressed.length,
+              url: "https://reports.example.com/snapshot.tsv.gz",
+            },
+          },
+        ],
+        links: {},
+      });
+    });
+    const client = new AppStoreAnalyticsClient("secret", {
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.readSnapshotMetricRange(
+        "snapshot-report",
+        "impressions",
+        "2026-08-01",
+        "2026-08-31",
+      ),
+    ).resolves.toBe(300);
   });
 
   it("keeps yesterday pending before Apple publishes its first partition", async () => {

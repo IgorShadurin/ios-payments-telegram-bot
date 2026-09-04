@@ -200,6 +200,34 @@ describe("AppDatabase", () => {
     });
   });
 
+  it("claims and deduplicates a delivered monthly report", () => {
+    expect(
+      database.claimMonthlyReportDelivery(
+        "2026-08-01",
+        "2026-08-31",
+        "/data/monthly.png",
+      ),
+    ).toMatchObject({
+      monthStartDate: "2026-08-01",
+      monthEndDate: "2026-08-31",
+      deliveryStatus: "sending",
+    });
+    expect(
+      database.claimMonthlyReportDelivery(
+        "2026-08-01",
+        "2026-08-31",
+        "/data/monthly.png",
+      ),
+    ).toBeUndefined();
+
+    database.markMonthlyReportDelivered("2026-08-01", 93);
+    expect(database.getMonthlyReportDelivery("2026-08-01")).toMatchObject({
+      deliveryStatus: "delivered",
+      deliveryAttempts: 1,
+      telegramMessageId: 93,
+    });
+  });
+
   it("stores every app metric snapshot and refreshes provisional data", () => {
     const apps = [
       {

@@ -410,6 +410,22 @@ export class AppStoreAnalyticsClient {
       : undefined;
   }
 
+  async findOneTimeSnapshotReportRequest(
+    appAppleId: number,
+  ): Promise<{ id: string } | undefined> {
+    const url = new URL(
+      `/v1/apps/${encodeURIComponent(String(appAppleId))}/analyticsReportRequests`,
+      APP_STORE_CONNECT_ORIGIN,
+    );
+    url.searchParams.set("filter[accessType]", "ONE_TIME_SNAPSHOT");
+    url.searchParams.set("limit", "200");
+    const requests = await this.collectPaginated(url, reportRequestsSchema);
+    const snapshot = requests.find(
+      (item) => item.attributes.accessType === "ONE_TIME_SNAPSHOT",
+    );
+    return snapshot ? { id: snapshot.id } : undefined;
+  }
+
   async createOngoingReportRequest(appAppleId: number): Promise<string> {
     const parsed = reportRequestSchema.parse(
       await this.requestJson("/v1/analyticsReportRequests", {
@@ -419,6 +435,32 @@ export class AppStoreAnalyticsClient {
           data: {
             type: "analyticsReportRequests",
             attributes: { accessType: "ONGOING" },
+            relationships: {
+              app: {
+                data: {
+                  type: "apps",
+                  id: String(appAppleId),
+                },
+              },
+            },
+          },
+        }),
+      }),
+    );
+    return parsed.data.id;
+  }
+
+  async createOneTimeSnapshotReportRequest(
+    appAppleId: number,
+  ): Promise<string> {
+    const parsed = reportRequestSchema.parse(
+      await this.requestJson("/v1/analyticsReportRequests", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          data: {
+            type: "analyticsReportRequests",
+            attributes: { accessType: "ONE_TIME_SNAPSHOT" },
             relationships: {
               app: {
                 data: {
@@ -649,6 +691,40 @@ export class AppStoreAnalyticsClient {
       }
     }
     return total;
+  }
+
+  async snapshotProcessingDate(reportId: string): Promise<string | undefined> {
+    const [latest] = await this.listDailyInstances(reportId);
+    return latest?.processingDate;
+  }
+
+  async readSnapshotMetricRange(
+    reportId: string,
+    metric: AnalyticsMetric,
+    startDate: string,
+    endDate: string,
+  ): Promise<number | undefined> {
+    if (startDate > endDate) {
+      throw new AppStoreAnalyticsError(
+        "Analytics report start date must not follow its end date",
+      );
+    }
+    const instances = await this.listDailyInstances(reportId);
+    const latestProcessingDate = instances[0]?.processingDate;
+    if (!latestProcessingDate) {
+      return undefined;
+    }
+    const latestInstances = instances.filter(
+      (instance) => instance.processingDate === latestProcessingDate,
+    );
+    const rows = (
+      await Promise.all(
+        latestInstances.map((instance) =>
+          this.downloadInstanceRows(instance.id),
+        ),
+      )
+    ).flat();
+    return aggregateMetricRowsRange(metric, rows, startDate, endDate);
   }
 }
 

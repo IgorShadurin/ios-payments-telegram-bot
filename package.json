@@ -25,6 +25,8 @@
     "report:daily:dev": "tsx scripts/daily-report.ts",
     "report:weekly": "node dist/scripts/weekly-report.js",
     "report:weekly:dev": "tsx scripts/weekly-report.ts",
+    "report:monthly": "node dist/scripts/monthly-report.js",
+    "report:monthly:dev": "tsx scripts/monthly-report.ts",
     "telegram:configure": "node dist/scripts/configure-telegram.js",
     "telegram:configure:dev": "tsx scripts/configure-telegram.ts"
   },

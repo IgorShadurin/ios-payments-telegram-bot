@@ -186,6 +186,43 @@ consume Apple's hourly allowance every 15 minutes:
 For a UTC-only scheduler, use `0 16 * * 1-3`. The production command is
 `node dist/scripts/weekly-report.js`.
 
+## Monthly App Store portfolio report
+
+The monthly worker aggregates the previous complete calendar month from
+Apple's analytics partitions. It stores impressions, downloads, and proceeds
+for every enabled app, produces the same paginated portfolio PNG with compact
+values, and sends numbered Top 10 Impressions and Top 10 Downloads lists in a
+distinct monthly Telegram caption. Delivery is idempotent by month.
+
+For the first historical month, the worker creates Apple's one-time snapshot
+request with the Admin setup key and waits until Apple generates it. This avoids
+silently counting days before the ongoing request existed as zero. Once the
+snapshot covers the requested month it is used for that history; later complete
+months automatically use the ongoing request.
+
+```bash
+# Preview the previous complete calendar month
+npm run report:monthly:dev -- --no-send
+
+# Generate and send the previous complete calendar month
+npm run report:monthly:dev
+
+# Explicitly generate and resend August 2026
+npm run report:monthly:dev -- --month 2026-08 --force-send
+```
+
+Run the production command at 19:00 Minsk starting on the fourth day of every
+month. The fifth and sixth are fallback attempts only when Apple is still
+generating the historical snapshot or a final partition; delivery deduplication
+makes them no-ops after a successful send:
+
+```text
+0 19 4-6 * *
+```
+
+For a UTC-only scheduler, use `0 16 4-6 * *`. The production command is
+`node dist/scripts/monthly-report.js`.
+
 Use the optional `APPLE_ANALYTICS_KEY_TYPE`, `APPLE_ANALYTICS_ISSUER_ID`,
 `APPLE_ANALYTICS_KEY_ID`, and `APPLE_ANALYTICS_PRIVATE_KEY_BASE64` variables
 for a dedicated analytics key. When they are omitted, the worker falls back to

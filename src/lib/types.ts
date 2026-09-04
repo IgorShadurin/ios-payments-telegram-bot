@@ -154,7 +154,7 @@ export interface DailyAppMetrics {
   proceedsChangePercent?: number;
 }
 
-export type PortfolioReportKind = "daily" | "weekly";
+export type PortfolioReportKind = "daily" | "weekly" | "monthly";
 
 export interface StoredPortfolioMetricSnapshot extends DailyAppMetrics {
   reportKind: PortfolioReportKind;
@@ -180,6 +180,15 @@ export interface WeeklyPortfolioReport {
   isSample?: boolean;
 }
 
+export interface MonthlyPortfolioReport {
+  monthStartDate: string;
+  monthEndDate: string;
+  generatedAt: string;
+  timeZone: string;
+  apps: DailyAppMetrics[];
+  isSample?: boolean;
+}
+
 export interface StoredDailyReportDelivery {
   reportDate: string;
   deliveryStatus: "pending" | "sending" | "retry" | "delivered";
@@ -195,6 +204,19 @@ export interface StoredDailyReportDelivery {
 export interface StoredWeeklyReportDelivery {
   weekStartDate: string;
   weekEndDate: string;
+  deliveryStatus: "pending" | "sending" | "retry" | "delivered";
+  deliveryAttempts: number;
+  nextAttemptAt: number;
+  imagePath: string;
+  lastError?: string;
+  telegramMessageId?: number;
+  createdAt: number;
+  deliveredAt?: number;
+}
+
+export interface StoredMonthlyReportDelivery {
+  monthStartDate: string;
+  monthEndDate: string;
   deliveryStatus: "pending" | "sending" | "retry" | "delivered";
   deliveryAttempts: number;
   nextAttemptAt: number;
