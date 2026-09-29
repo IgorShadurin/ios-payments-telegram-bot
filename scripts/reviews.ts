@@ -8,7 +8,7 @@ import { pollCustomerReviews } from "../src/lib/reviews";
 
 async function main(): Promise<void> {
   const config = getAppStoreConnectConfig();
-  const token = createAppStoreConnectToken(config);
+  const token = () => createAppStoreConnectToken(config);
   const database = new AppDatabase();
   try {
     const result = await pollCustomerReviews(

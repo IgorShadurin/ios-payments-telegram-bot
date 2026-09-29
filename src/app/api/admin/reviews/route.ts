@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     }
     const { limit, notify } = parseOptions(request);
     const config = getAppStoreConnectConfig();
-    const token = createAppStoreConnectToken(config);
+    const token = () => createAppStoreConnectToken(config);
     const failedApps: string[] = [];
     const poll = await pollCustomerReviews(
       getDatabase(),

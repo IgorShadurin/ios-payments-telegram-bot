@@ -166,6 +166,135 @@ describe("App Store Connect client", () => {
     expect(wait.mock.calls).toEqual([[5_000], [20_000]]);
   });
 
+  it("requests a fresh token for each HTTP attempt", async () => {
+    const token = vi
+      .fn()
+      .mockReturnValueOnce("first-token")
+      .mockReturnValueOnce("second-token");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [], links: {} }), { status: 200 }),
+      );
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        token,
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).resolves.toEqual({ reviews: [], nextUrl: undefined });
+    expect(token).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe(
+      "Bearer first-token",
+    );
+    expect(fetchMock.mock.calls[1][1].headers.authorization).toBe(
+      "Bearer second-token",
+    );
+  });
+
+  it("keeps a long poll authorized after the original JWT expires", async () => {
+    const { config } = keyConfig();
+    let now = 1_750_000_000_000;
+    const token = () => createAppStoreConnectToken(config, now);
+    const fetchMock = vi.fn(async (_input: URL, init: RequestInit) => {
+      const authorization = (init.headers as Record<string, string>)
+        .authorization;
+      const jwt = authorization.slice("Bearer ".length);
+      const payload = JSON.parse(
+        Buffer.from(jwt.split(".")[1], "base64url").toString(),
+      );
+      return payload.exp > Math.floor(now / 1_000)
+        ? new Response(JSON.stringify({ data: [], links: {} }), {
+            status: 200,
+          })
+        : new Response("", { status: 401 });
+    });
+
+    const originalToken = token();
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        token,
+        undefined,
+        fetchMock as unknown as typeof fetch,
+      ),
+    ).resolves.toEqual({ reviews: [], nextUrl: undefined });
+
+    now += 16 * 60 * 1_000;
+    await expect(
+      fetchCustomerReviewPage(
+        987654321,
+        originalToken,
+        undefined,
+        fetchMock as unknown as typeof fetch,
+      ),
+    ).rejects.toMatchObject({ status: 401 });
+    await expect(
+      fetchCustomerReviewPage(
+        987654321,
+        token,
+        undefined,
+        fetchMock as unknown as typeof fetch,
+      ),
+    ).resolves.toEqual({ reviews: [], nextUrl: undefined });
+  });
+
+  it("retries one intermittent 401 with a newly signed token", async () => {
+    const token = vi
+      .fn()
+      .mockReturnValueOnce("first-token")
+      .mockReturnValueOnce("second-token");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [], links: {} }), { status: 200 }),
+      );
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        token,
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).resolves.toEqual({ reviews: [], nextUrl: undefined });
+    expect(token).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe(
+      "Bearer first-token",
+    );
+    expect(fetchMock.mock.calls[1][1].headers.authorization).toBe(
+      "Bearer second-token",
+    );
+    expect(wait).toHaveBeenCalledExactlyOnceWith(2_000);
+  });
+
+  it("reports a persistent 401 after one authentication retry", async () => {
+    const token = vi.fn(() => "fresh-token");
+    const fetchMock = vi.fn(async () => new Response("", { status: 401 }));
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        token,
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(token).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledExactlyOnceWith(2_000);
+  });
+
   it("honors a reasonable Retry-After delay from Apple", async () => {
     const fetchMock = vi
       .fn()

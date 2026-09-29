@@ -7,6 +7,7 @@ import type { CustomerReview } from "./types";
 const APP_STORE_CONNECT_ORIGIN = "https://api.appstoreconnect.apple.com";
 const REVIEW_PAGE_LIMIT = 200;
 const RETRY_BACKOFF_MS = [5_000, 20_000] as const;
+const AUTH_RETRY_BACKOFF_MS = 2_000;
 const MAX_IN_CYCLE_RETRY_AFTER_MS = 30_000;
 
 const reviewAttributesSchema = z.object({
@@ -185,15 +186,16 @@ async function readResponseBody(response: Response): Promise<unknown> {
 
 async function fetchCustomerReviewPageOnce(
   appAppleId: number,
-  token: string,
+  token: string | (() => string),
   url: URL,
   fetchImplementation: typeof fetch = fetch,
 ): Promise<CustomerReviewPage> {
+  const bearerToken = typeof token === "string" ? token : token();
   let response: Response;
   try {
     response = await fetchImplementation(url, {
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: `Bearer ${bearerToken}`,
         accept: "application/json",
       },
       signal: AbortSignal.timeout(15_000),
@@ -235,7 +237,7 @@ async function fetchCustomerReviewPageOnce(
 
 export async function fetchCustomerReviewPage(
   appAppleId: number,
-  token: string,
+  token: string | (() => string),
   nextUrl?: string,
   fetchImplementation: typeof fetch = fetch,
   wait: (milliseconds: number) => Promise<unknown> = delay,
@@ -244,8 +246,9 @@ export async function fetchCustomerReviewPage(
     nextUrl ?? initialReviewUrl(appAppleId),
     appAppleId,
   );
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  let transientRetries = 0;
+  let authRetried = false;
+  while (true) {
     try {
       return await fetchCustomerReviewPageOnce(
         appAppleId,
@@ -254,11 +257,21 @@ export async function fetchCustomerReviewPage(
         fetchImplementation,
       );
     } catch (error) {
-      lastError = error;
-      if (!isRetryableAppStoreConnectError(error) || attempt === 2) {
+      if (
+        error instanceof AppStoreConnectError &&
+        error.status === 401 &&
+        typeof token === "function" &&
+        !authRetried
+      ) {
+        authRetried = true;
+        await wait(AUTH_RETRY_BACKOFF_MS);
+        continue;
+      }
+      if (!isRetryableAppStoreConnectError(error) || transientRetries === 2) {
         throw error;
       }
-      const fallbackDelayMs = RETRY_BACKOFF_MS[attempt];
+      const fallbackDelayMs = RETRY_BACKOFF_MS[transientRetries];
+      transientRetries += 1;
       const requestedDelayMs = Math.max(
         fallbackDelayMs,
         error.retryAfterMs ?? 0,
@@ -269,5 +282,4 @@ export async function fetchCustomerReviewPage(
       await wait(requestedDelayMs);
     }
   }
-  throw lastError;
 }
