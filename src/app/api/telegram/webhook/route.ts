@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDatabase } from "@/lib/database";
+import { logBackendFailure } from "@/lib/diagnostics";
 import { RequestBodyError, readJsonBody } from "@/lib/request";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { responseForTelegramMessage } from "@/lib/telegram-commands";
@@ -14,6 +15,7 @@ export const runtime = "nodejs";
 const noStoreHeaders = { "cache-control": "no-store" };
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   try {
     if (!isTelegramWebhookAuthorized(request)) {
       return NextResponse.json(
@@ -53,14 +55,12 @@ export async function POST(request: Request) {
         { status: error.status, headers: noStoreHeaders },
       );
     }
-    console.error(
-      JSON.stringify({
-        event: "telegram_command_error",
-        error: error instanceof Error ? error.name : "UnknownError",
-      }),
-    );
+    const errorId = logBackendFailure("telegram_command_error", error, {
+      route: "telegram/webhook",
+      durationMs: Date.now() - startedAt,
+    });
     return NextResponse.json(
-      { error: "Telegram command processing failed" },
+      { error: "Telegram command processing failed", errorId },
       { status: 503, headers: noStoreHeaders },
     );
   }

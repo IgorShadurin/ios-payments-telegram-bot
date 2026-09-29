@@ -1,4 +1,5 @@
 import type { AppDatabase } from "./database";
+import { logBackendFailure } from "./diagnostics";
 import {
   shouldSendOutboxNotification,
   shouldSendPaymentNotification,
@@ -34,6 +35,11 @@ async function deliverClaimed(
     const message =
       error instanceof Error ? error.message : "Unknown Telegram error";
     database.markForRetry(notification.id, message, Date.now() + retryAfterMs);
+    logBackendFailure("telegram_notification_delivery_failed", error, {
+      phase: "delivery",
+      itemId: notification.id,
+      retryInMs: retryAfterMs,
+    });
     return "failed";
   }
 }
@@ -62,6 +68,12 @@ async function deliverClaimedOutboxMessage(
       errorMessage,
       Date.now() + retryAfterMs,
     );
+    logBackendFailure("telegram_outbox_delivery_failed", error, {
+      phase: "delivery",
+      itemId: message.id,
+      category: message.category,
+      retryInMs: retryAfterMs,
+    });
     return "failed";
   }
 }

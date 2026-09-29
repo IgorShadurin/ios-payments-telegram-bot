@@ -38,6 +38,7 @@ export class TelegramDeliveryError extends Error {
   constructor(
     message: string,
     readonly retryAfterSeconds?: number,
+    readonly status?: number,
   ) {
     super(message);
     this.name = "TelegramDeliveryError";
@@ -104,6 +105,7 @@ export async function sendTelegramMessage(
     throw new TelegramDeliveryError(
       `Telegram rejected the message: ${description}`,
       parsed.success ? parsed.data.parameters?.retry_after : undefined,
+      response.status,
     );
   }
   return parsed.data.result.message_id;
@@ -162,6 +164,7 @@ export async function sendTelegramPhoto(
     throw new TelegramDeliveryError(
       `Telegram rejected the photo: ${description}`,
       parsed.success ? parsed.data.parameters?.retry_after : undefined,
+      response.status,
     );
   }
   return parsed.data.result.message_id;
@@ -249,6 +252,7 @@ export async function sendTelegramPhotoGroup(
     throw new TelegramDeliveryError(
       `Telegram rejected the photo group: ${description}`,
       parsed.success ? parsed.data.parameters?.retry_after : undefined,
+      response.status,
     );
   }
   return parsed.data.result.map((message) => message.message_id);

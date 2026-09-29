@@ -80,9 +80,10 @@ describe("customer review polling", () => {
       );
     });
     const onError = vi.fn();
+    const onDeferred = vi.fn();
 
     await expect(
-      pollCustomerReviews(database, fetchPage, onError),
+      pollCustomerReviews(database, fetchPage, onError, onDeferred),
     ).resolves.toEqual({
       apps: 2,
       attemptedApps: 1,
@@ -95,6 +96,16 @@ describe("customer review polling", () => {
     });
     expect(fetchPage).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
+    expect(onDeferred).toHaveBeenCalledWith(
+      expect.objectContaining({ bundleId: "com.example.app" }),
+      expect.objectContaining({ status: 429 }),
+      expect.objectContaining({
+        reason: "rate_limit",
+        attemptedApps: 1,
+        page: 1,
+        durationMs: expect.any(Number),
+      }),
+    );
   });
 
   it("defers temporary Apple server failures to the next cycle", async () => {
@@ -154,6 +165,15 @@ describe("customer review polling", () => {
     });
     expect(fetchPage).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ bundleId: "com.example.app" }),
+      expect.objectContaining({ status: 401 }),
+      expect.objectContaining({
+        attemptedApps: 1,
+        page: 1,
+        durationMs: expect.any(Number),
+      }),
+    );
   });
 
   it("escapes review content before placing it in Telegram HTML", () => {

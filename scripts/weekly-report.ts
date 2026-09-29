@@ -20,6 +20,7 @@ import {
   weeklyReportCaption,
 } from "../src/lib/daily-report";
 import { AppDatabase } from "../src/lib/database";
+import { logBackendFailure } from "../src/lib/diagnostics";
 import {
   sendTelegramPhotoGroup,
   TelegramDeliveryError,
@@ -29,6 +30,8 @@ import type {
   RegisteredApp,
   WeeklyPortfolioReport,
 } from "../src/lib/types";
+
+const startedAt = Date.now();
 
 type CollectedWeeklyAppMetrics = DailyAppMetrics & {
   inferZeroWhenPortfolioPublished: Partial<Record<AnalyticsMetric, boolean>>;
@@ -374,8 +377,9 @@ main().catch((error) => {
     );
     return;
   }
-  console.error(
-    error instanceof Error ? error.message : "Weekly report failed",
-  );
+  logBackendFailure("weekly_report_worker_failed", error, {
+    task: "weekly_report",
+    durationMs: Date.now() - startedAt,
+  });
   process.exitCode = 1;
 });

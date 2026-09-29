@@ -2,6 +2,7 @@ import { createPrivateKey, sign } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AppStoreConnectConfig } from "./config";
+import { logBackendWarning } from "./diagnostics";
 import type { CustomerReview } from "./types";
 
 const APP_STORE_CONNECT_ORIGIN = "https://api.appstoreconnect.apple.com";
@@ -9,6 +10,19 @@ const REVIEW_PAGE_LIMIT = 200;
 const RETRY_BACKOFF_MS = [5_000, 20_000] as const;
 const AUTH_RETRY_BACKOFF_MS = 2_000;
 const MAX_IN_CYCLE_RETRY_AFTER_MS = 30_000;
+const MAX_ERROR_RESPONSE_BYTES = 16 * 1024;
+const SAFE_APPLE_IDENTIFIER = /^[A-Za-z0-9_.-]{1,128}$/;
+
+export interface AppStoreConnectDiagnostics {
+  phase?: string;
+  appleCode?: string;
+  appleErrorId?: string;
+  requestId?: string;
+  transportType?: string;
+  transportCode?: string;
+  attempts?: number;
+  durationMs?: number;
+}
 
 const reviewAttributesSchema = z.object({
   rating: z.number().int().min(1).max(5),
@@ -48,10 +62,84 @@ export class AppStoreConnectError extends Error {
     message: string,
     readonly status?: number,
     readonly retryAfterMs?: number,
+    readonly diagnostics: AppStoreConnectDiagnostics = {},
   ) {
     super(message);
     this.name = "AppStoreConnectError";
   }
+}
+
+function safeAppleIdentifier(value: unknown): string | undefined {
+  return typeof value === "string" && SAFE_APPLE_IDENTIFIER.test(value)
+    ? value
+    : undefined;
+}
+
+function transportCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const candidate = error as { code?: unknown; cause?: unknown };
+  const cause =
+    candidate.cause && typeof candidate.cause === "object"
+      ? (candidate.cause as { code?: unknown })
+      : undefined;
+  return safeAppleIdentifier(cause?.code ?? candidate.code);
+}
+
+async function appleErrorMetadata(
+  response: Response,
+): Promise<AppStoreConnectDiagnostics> {
+  const requestId = safeAppleIdentifier(
+    response.headers.get("x-request-id") ??
+      response.headers.get("x-apple-request-uuid"),
+  );
+  const metadata: AppStoreConnectDiagnostics = {
+    phase: "http",
+    ...(requestId ? { requestId } : {}),
+  };
+  const length = Number(response.headers.get("content-length"));
+  if (length > MAX_ERROR_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    return metadata;
+  }
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return metadata;
+  }
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) {
+        break;
+      }
+      bytes += part.value.byteLength;
+      if (bytes > MAX_ERROR_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return metadata;
+      }
+      chunks.push(Buffer.from(part.value));
+    }
+  } catch {
+    return metadata;
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      errors?: Array<{ code?: unknown; id?: unknown }>;
+    };
+    const first = Array.isArray(body.errors) ? body.errors[0] : undefined;
+    if (first && typeof first === "object") {
+      metadata.appleCode = safeAppleIdentifier(first.code);
+      metadata.appleErrorId = safeAppleIdentifier(first.id);
+    }
+  } catch {
+    // A malformed upstream error body should not replace its HTTP status.
+  }
+  return metadata;
 }
 
 function retryAfterMs(header: string | null): number | undefined {
@@ -154,6 +242,9 @@ function validateReviewUrl(urlInput: string, appAppleId: number): URL {
   ) {
     throw new AppStoreConnectError(
       "App Store Connect returned an unsafe pagination URL",
+      undefined,
+      undefined,
+      { phase: "pagination" },
     );
   }
   return url;
@@ -200,16 +291,27 @@ async function fetchCustomerReviewPageOnce(
       },
       signal: AbortSignal.timeout(15_000),
     });
-  } catch {
-    throw new AppStoreConnectError("App Store Connect request failed");
+  } catch (error) {
+    throw new AppStoreConnectError(
+      "App Store Connect request failed",
+      undefined,
+      undefined,
+      {
+        phase: "request",
+        transportType:
+          error instanceof Error ? safeAppleIdentifier(error.name) : undefined,
+        transportCode: transportCode(error),
+      },
+    );
   }
 
   if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
+    const metadata = await appleErrorMetadata(response);
     throw new AppStoreConnectError(
       `App Store Connect rejected the request with HTTP ${response.status}`,
       response.status,
       retryAfterMs(response.headers.get("retry-after")),
+      metadata,
     );
   }
 
@@ -248,7 +350,10 @@ export async function fetchCustomerReviewPage(
   );
   let transientRetries = 0;
   let authRetried = false;
+  let attempts = 0;
+  const startedAt = Date.now();
   while (true) {
+    attempts += 1;
     try {
       return await fetchCustomerReviewPageOnce(
         appAppleId,
@@ -264,10 +369,20 @@ export async function fetchCustomerReviewPage(
         !authRetried
       ) {
         authRetried = true;
+        logBackendWarning("app_store_review_request_retry", error, {
+          appAppleId,
+          attempt: attempts,
+          retryInMs: AUTH_RETRY_BACKOFF_MS,
+          durationMs: Date.now() - startedAt,
+        });
         await wait(AUTH_RETRY_BACKOFF_MS);
         continue;
       }
       if (!isRetryableAppStoreConnectError(error) || transientRetries === 2) {
+        if (error instanceof AppStoreConnectError) {
+          error.diagnostics.attempts = attempts;
+          error.diagnostics.durationMs = Date.now() - startedAt;
+        }
         throw error;
       }
       const fallbackDelayMs = RETRY_BACKOFF_MS[transientRetries];
@@ -277,8 +392,16 @@ export async function fetchCustomerReviewPage(
         error.retryAfterMs ?? 0,
       );
       if (requestedDelayMs > MAX_IN_CYCLE_RETRY_AFTER_MS) {
+        error.diagnostics.attempts = attempts;
+        error.diagnostics.durationMs = Date.now() - startedAt;
         throw error;
       }
+      logBackendWarning("app_store_review_request_retry", error, {
+        appAppleId,
+        attempt: attempts,
+        retryInMs: requestedDelayMs,
+        durationMs: Date.now() - startedAt,
+      });
       await wait(requestedDelayMs);
     }
   }

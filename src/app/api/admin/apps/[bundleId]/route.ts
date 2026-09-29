@@ -3,6 +3,7 @@ import { z } from "zod";
 import { isAdminRequestAuthorized } from "@/lib/admin-auth";
 import { getDatabase } from "@/lib/database";
 import { deliverTelegramOutboxMessageNow } from "@/lib/delivery";
+import { logBackendFailure } from "@/lib/diagnostics";
 import {
   bundleIdSchema,
   registerTrackedApp,
@@ -56,6 +57,7 @@ function deliverAfterResponse(outboxMessageId?: number) {
 }
 
 export async function PUT(request: Request, context: RouteContext) {
+  const startedAt = Date.now();
   try {
     if (!isAdminRequestAuthorized(request)) {
       return unauthorized();
@@ -93,20 +95,19 @@ export async function PUT(request: Request, context: RouteContext) {
         { status: 400, headers: { "cache-control": "no-store" } },
       );
     }
-    console.error(
-      JSON.stringify({
-        event: "admin_app_registration_error",
-        error: error instanceof Error ? error.name : "UnknownError",
-      }),
-    );
+    const errorId = logBackendFailure("admin_app_registration_error", error, {
+      route: "admin/apps/id",
+      durationMs: Date.now() - startedAt,
+    });
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", errorId },
       { status: 500, headers: { "cache-control": "no-store" } },
     );
   }
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
+  const startedAt = Date.now();
   try {
     if (!isAdminRequestAuthorized(request)) {
       return unauthorized();
@@ -131,14 +132,12 @@ export async function DELETE(request: Request, context: RouteContext) {
         { status: 400, headers: { "cache-control": "no-store" } },
       );
     }
-    console.error(
-      JSON.stringify({
-        event: "admin_app_removal_error",
-        error: error instanceof Error ? error.name : "UnknownError",
-      }),
-    );
+    const errorId = logBackendFailure("admin_app_removal_error", error, {
+      route: "admin/apps/id",
+      durationMs: Date.now() - startedAt,
+    });
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", errorId },
       { status: 500, headers: { "cache-control": "no-store" } },
     );
   }

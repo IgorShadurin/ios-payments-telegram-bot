@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AppleNotificationError, verifyAppleNotification } from "@/lib/apple";
 import { getDatabase } from "@/lib/database";
 import { deliverNotificationNow } from "@/lib/delivery";
+import { logBackendFailure } from "@/lib/diagnostics";
 import { formatTelegramMessage } from "@/lib/message";
 import { RequestBodyError, readJsonBody } from "@/lib/request";
 
@@ -13,6 +14,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   try {
     const body = bodySchema.safeParse(await readJsonBody(request));
     if (!body.success) {
@@ -74,14 +76,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status });
     }
 
-    console.error(
-      JSON.stringify({
-        event: "apple_notification_error",
-        error: error instanceof Error ? error.name : "UnknownError",
-      }),
-    );
+    const errorId = logBackendFailure("apple_notification_error", error, {
+      route: "apple/notifications",
+      durationMs: Date.now() - startedAt,
+    });
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", errorId },
       { status: 500 },
     );
   }

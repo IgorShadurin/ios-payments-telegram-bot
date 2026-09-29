@@ -20,6 +20,7 @@ import {
   renderMonthlyReportPng,
 } from "../src/lib/daily-report";
 import { AppDatabase } from "../src/lib/database";
+import { logBackendFailure } from "../src/lib/diagnostics";
 import {
   sendTelegramPhotoGroup,
   TelegramDeliveryError,
@@ -29,6 +30,8 @@ import type {
   MonthlyPortfolioReport,
   RegisteredApp,
 } from "../src/lib/types";
+
+const startedAt = Date.now();
 
 type CollectedMonthlyAppMetrics = DailyAppMetrics & {
   inferZeroWhenPortfolioPublished: Partial<Record<AnalyticsMetric, boolean>>;
@@ -372,8 +375,9 @@ main().catch((error) => {
     );
     return;
   }
-  console.error(
-    error instanceof Error ? error.message : "Monthly report failed",
-  );
+  logBackendFailure("monthly_report_worker_failed", error, {
+    task: "monthly_report",
+    durationMs: Date.now() - startedAt,
+  });
   process.exitCode = 1;
 });

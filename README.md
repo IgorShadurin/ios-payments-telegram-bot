@@ -597,10 +597,18 @@ For an individual API key, use
 `APP_STORE_CONNECT_ISSUER_ID`, and set that key's ID and private key. The
 individual user's role and per-app access determine which reviews it can read.
 
-The worker exits nonzero if an app has a permanent failure and prints only the
-affected bundle ID and a sanitized error. It never prints the API token,
-private key, or review text. Run the existing delivery worker every minute to
-send queued review alerts and retry Telegram failures.
+The worker exits nonzero if an app has a permanent failure. Run the existing
+delivery worker every minute to send queued review alerts and retry Telegram
+failures.
+
+Backend failures are logged as one JSON line with a `diagnosticId`, timestamp,
+operation, safe error type, code and status, and elapsed time. Review polling
+also records the app bundle ID, numeric App Store ID, app position, page,
+request attempts, and Apple's error `code` and correlation IDs when Apple
+provides them. A single HTTP `401` is retried once with a new JWT and logged as
+a warning; a repeated `401` fails the task. Logs omit JWTs, private keys,
+review text, request URLs, and upstream error descriptions. Unexpected API
+`5xx` responses include an `errorId` matching the server log's `diagnosticId`.
 
 Temporary network errors, Apple HTTP `429` rate limits, and Apple `5xx`
 responses use increasing retry delays of 5 and 20 seconds, extended when Apple

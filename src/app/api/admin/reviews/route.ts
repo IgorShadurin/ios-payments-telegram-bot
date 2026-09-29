@@ -8,6 +8,7 @@ import {
 import { getAppStoreConnectConfig } from "@/lib/config";
 import { getDatabase } from "@/lib/database";
 import { deliverTelegramOutboxMessageNow } from "@/lib/delivery";
+import { logBackendFailure, logBackendWarning } from "@/lib/diagnostics";
 import {
   pollCustomerReviews,
   queueStoredCustomerReviewNotifications,
@@ -60,6 +61,7 @@ function reviewResponse(reviews: readonly StoredCustomerReviewWithApp[]) {
 }
 
 export function GET(request: Request) {
+  const startedAt = Date.now();
   try {
     if (!isAdminRequestAuthorized(request)) {
       return unauthorized();
@@ -76,14 +78,19 @@ export function GET(request: Request) {
         { status: 400, headers: { "cache-control": "no-store" } },
       );
     }
+    const errorId = logBackendFailure("admin_reviews_read_failed", error, {
+      route: "admin/reviews",
+      durationMs: Date.now() - startedAt,
+    });
     return NextResponse.json(
-      { error: "Review API is unavailable" },
+      { error: "Review API is unavailable", errorId },
       { status: 503, headers: { "cache-control": "no-store" } },
     );
   }
 }
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   try {
     if (!isAdminRequestAuthorized(request)) {
       return unauthorized();
@@ -92,12 +99,29 @@ export async function POST(request: Request) {
     const config = getAppStoreConnectConfig();
     const token = () => createAppStoreConnectToken(config);
     const failedApps: string[] = [];
+    const failureIds: string[] = [];
     const poll = await pollCustomerReviews(
       getDatabase(),
       (appAppleId, nextUrl) =>
         fetchCustomerReviewPage(appAppleId, token, nextUrl),
-      (app) => {
+      (app, error, context) => {
         failedApps.push(app.bundleId);
+        failureIds.push(
+          logBackendFailure("manual_review_poll_app_failed", error, {
+            route: "admin/reviews",
+            appBundleId: app.bundleId,
+            appAppleId: app.appAppleId,
+            ...context,
+          }),
+        );
+      },
+      (app, error, context) => {
+        logBackendWarning("manual_review_poll_deferred", error, {
+          route: "admin/reviews",
+          appBundleId: app.bundleId,
+          appAppleId: app.appAppleId,
+          ...context,
+        });
       },
     );
     const database = getDatabase();
@@ -116,6 +140,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         ok,
+        ...(ok ? {} : { errorId: failureIds[0], errorIds: failureIds }),
         poll,
         failedApps,
         notifications: {
@@ -137,14 +162,12 @@ export async function POST(request: Request) {
         { status: 400, headers: { "cache-control": "no-store" } },
       );
     }
-    console.error(
-      JSON.stringify({
-        event: "manual_review_pull_error",
-        error: error instanceof Error ? error.name : "UnknownError",
-      }),
-    );
+    const errorId = logBackendFailure("manual_review_pull_error", error, {
+      route: "admin/reviews",
+      durationMs: Date.now() - startedAt,
+    });
     return NextResponse.json(
-      { error: "Manual review pull failed" },
+      { error: "Manual review pull failed", errorId },
       { status: 503, headers: { "cache-control": "no-store" } },
     );
   }

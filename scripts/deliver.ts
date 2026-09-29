@@ -2,6 +2,9 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { AppDatabase } from "../src/lib/database";
 import { deliverDueNotifications } from "../src/lib/delivery";
+import { logBackendFailure } from "../src/lib/diagnostics";
+
+const startedAt = Date.now();
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -25,6 +28,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "Delivery failed");
+  logBackendFailure("delivery_worker_failed", error, {
+    task: "deliver",
+    durationMs: Date.now() - startedAt,
+  });
   process.exitCode = 1;
 });

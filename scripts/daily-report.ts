@@ -21,6 +21,7 @@ import {
   renderDailyReportPng,
 } from "../src/lib/daily-report";
 import { AppDatabase } from "../src/lib/database";
+import { logBackendFailure } from "../src/lib/diagnostics";
 import {
   sendTelegramPhotoGroup,
   TelegramDeliveryError,
@@ -30,6 +31,8 @@ import type {
   DailyPortfolioReport,
   RegisteredApp,
 } from "../src/lib/types";
+
+const startedAt = Date.now();
 
 const sampleApps: DailyAppMetrics[] = [
   {
@@ -464,6 +467,9 @@ main().catch((error) => {
     );
     return;
   }
-  console.error(error instanceof Error ? error.message : "Daily report failed");
+  logBackendFailure("daily_report_worker_failed", error, {
+    task: "daily_report",
+    durationMs: Date.now() - startedAt,
+  });
   process.exitCode = 1;
 });

@@ -88,6 +88,16 @@ export interface ReviewPollResult {
   deferredReason?: ReviewPollDeferredReason;
 }
 
+export interface ReviewPollErrorContext {
+  attemptedApps: number;
+  page: number;
+  durationMs: number;
+}
+
+export interface ReviewPollDeferredContext extends ReviewPollErrorContext {
+  reason: ReviewPollDeferredReason;
+}
+
 function deferredReason(error: AppStoreConnectError): ReviewPollDeferredReason {
   return error.status === 429 ? "rate_limit" : "temporary_unavailable";
 }
@@ -117,7 +127,16 @@ export function queueStoredCustomerReviewNotifications(
 export async function pollCustomerReviews(
   database: AppDatabase,
   fetchPage: ReviewPageFetcher,
-  onError: (app: RegisteredApp, error: unknown) => void = () => undefined,
+  onError: (
+    app: RegisteredApp,
+    error: unknown,
+    context: ReviewPollErrorContext,
+  ) => void = () => undefined,
+  onDeferred: (
+    app: RegisteredApp,
+    error: unknown,
+    context: ReviewPollDeferredContext,
+  ) => void = () => undefined,
 ): Promise<ReviewPollResult> {
   const apps = database.listApps(false);
   const result: ReviewPollResult = {
@@ -133,12 +152,15 @@ export async function pollCustomerReviews(
   for (const [appIndex, app] of apps.entries()) {
     result.attemptedApps += 1;
     let nextUrl: string | undefined;
+    let pageAttempted = 1;
+    const appStartedAt = Date.now();
     try {
       for (
         let pageNumber = 0;
         pageNumber < MAX_PAGES_PER_APP;
         pageNumber += 1
       ) {
+        pageAttempted = pageNumber + 1;
         const page = await fetchPage(app.appAppleId, nextUrl);
         const hadKnownReview = page.reviews.some((review) =>
           database.getCustomerReview(review.id),
@@ -173,6 +195,12 @@ export async function pollCustomerReviews(
         ) {
           result.deferred = true;
           result.deferredReason = "rate_limit_headroom";
+          onDeferred(app, undefined, {
+            reason: "rate_limit_headroom",
+            attemptedApps: result.attemptedApps,
+            page: pageAttempted,
+            durationMs: Date.now() - appStartedAt,
+          });
           return result;
         }
         if (appPollComplete) {
@@ -183,10 +211,20 @@ export async function pollCustomerReviews(
       if (isRetryableAppStoreConnectError(error)) {
         result.deferred = true;
         result.deferredReason = deferredReason(error);
+        onDeferred(app, error, {
+          reason: result.deferredReason,
+          attemptedApps: result.attemptedApps,
+          page: pageAttempted,
+          durationMs: Date.now() - appStartedAt,
+        });
         return result;
       }
       result.failed += 1;
-      onError(app, error);
+      onError(app, error, {
+        attemptedApps: result.attemptedApps,
+        page: pageAttempted,
+        durationMs: Date.now() - appStartedAt,
+      });
       if (error instanceof AppStoreConnectError && error.status === 401) {
         return result;
       }

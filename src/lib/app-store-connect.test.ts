@@ -405,4 +405,78 @@ describe("App Store Connect client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(wait).not.toHaveBeenCalled();
   });
+
+  it("retains only Apple's safe error code and correlation IDs", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            errors: [
+              {
+                id: "123e4567-e89b-12d3-a456-426614174000",
+                code: "NOT_AUTHORIZED",
+                detail: "private review text and secret-token",
+              },
+            ],
+          }),
+          {
+            status: 401,
+            headers: { "x-request-id": "req-123" },
+          },
+        ),
+    );
+
+    let failure: unknown;
+    try {
+      await fetchCustomerReviewPage(
+        123456789,
+        "static-token",
+        undefined,
+        fetchMock as unknown as typeof fetch,
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      status: 401,
+      diagnostics: {
+        phase: "http",
+        appleCode: "NOT_AUTHORIZED",
+        appleErrorId: "123e4567-e89b-12d3-a456-426614174000",
+        requestId: "req-123",
+        attempts: 1,
+        durationMs: expect.any(Number),
+      },
+    });
+    expect(JSON.stringify(failure)).not.toContain("private review text");
+    expect(JSON.stringify(failure)).not.toContain("secret-token");
+  });
+
+  it("records network failure type, safe transport code, attempts, and elapsed time", async () => {
+    const cause = Object.assign(new Error("secret-token"), {
+      code: "ECONNRESET",
+    });
+    const fetchMock = vi.fn(async () => {
+      throw Object.assign(new Error("private request URL"), { cause });
+    });
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      fetchCustomerReviewPage(
+        123456789,
+        "static-token",
+        undefined,
+        fetchMock as unknown as typeof fetch,
+        wait,
+      ),
+    ).rejects.toMatchObject({
+      diagnostics: {
+        phase: "request",
+        transportType: "Error",
+        transportCode: "ECONNRESET",
+        attempts: 3,
+        durationMs: expect.any(Number),
+      },
+    });
+  });
 });
