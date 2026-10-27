@@ -90,6 +90,7 @@ describe("customer review polling", () => {
       baselineApps: 0,
       stored: 0,
       queued: 0,
+      skipped: 0,
       failed: 0,
       deferred: true,
       deferredReason: "rate_limit",
@@ -174,6 +175,111 @@ describe("customer review polling", () => {
         durationMs: expect.any(Number),
       }),
     );
+  });
+
+  it.each([
+    123456789, 987654321,
+  ])("skips an inaccessible app (%s) while polling accessible apps", async (deniedId) => {
+    database.addApp("Second", "com.example.second", 987654321);
+    const onError = vi.fn();
+    const onSkipped = vi.fn();
+    const error = new AppStoreConnectError("Forbidden", 403, undefined, {
+      appleCode: "FORBIDDEN_ERROR",
+    });
+    const fetchPage = vi.fn(async (appAppleId: number) => {
+      if (appAppleId === deniedId) throw error;
+      return { reviews: [review("accessible-review")] };
+    });
+
+    await expect(
+      pollCustomerReviews(database, fetchPage, onError, undefined, onSkipped),
+    ).resolves.toMatchObject({
+      attemptedApps: 2,
+      baselineApps: 1,
+      stored: 1,
+      skipped: 1,
+      failed: 0,
+      deferred: false,
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(onError).not.toHaveBeenCalled();
+    expect(onSkipped).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ appAppleId: deniedId }),
+      error,
+      expect.objectContaining({ reason: "access_denied", page: 1 }),
+    );
+
+    // Denial must not create a baseline or permanently disable this app.
+    const recovered = vi.fn(async () => ({ reviews: [] }));
+    await expect(
+      pollCustomerReviews(database, recovered),
+    ).resolves.toMatchObject({
+      attemptedApps: 2,
+      baselineApps: 1,
+      skipped: 0,
+      failed: 0,
+    });
+  });
+
+  it("still fails when the key cannot read any app", async () => {
+    database.addApp("Second", "com.example.second", 987654321);
+    const onError = vi.fn();
+    const onSkipped = vi.fn();
+    const fetchPage = vi.fn(async () => {
+      throw new AppStoreConnectError("Forbidden", 403);
+    });
+
+    await expect(
+      pollCustomerReviews(database, fetchPage, onError, undefined, onSkipped),
+    ).resolves.toMatchObject({
+      attemptedApps: 2,
+      baselineApps: 0,
+      skipped: 0,
+      failed: 2,
+    });
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(onSkipped).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    401, 429,
+  ])("preserves an earlier permission failure when HTTP %s stops the cycle", async (status) => {
+    database.addApp("Second", "com.example.second", 987654321);
+    const onError = vi.fn();
+    const fetchPage = vi
+      .fn()
+      .mockRejectedValueOnce(new AppStoreConnectError("Forbidden", 403))
+      .mockRejectedValueOnce(new AppStoreConnectError("Stopped", status));
+
+    await expect(
+      pollCustomerReviews(database, fetchPage, onError),
+    ).resolves.toMatchObject({
+      attemptedApps: 2,
+      skipped: 0,
+      failed: status === 401 ? 2 : 1,
+      deferred: status === 429,
+    });
+    expect(onError).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: 403 }),
+      expect.objectContaining({ attemptedApps: 1, page: 1 }),
+    );
+  });
+
+  it("keeps other permanent app failures fatal", async () => {
+    database.addApp("Second", "com.example.second", 987654321);
+    const fetchPage = vi
+      .fn()
+      .mockRejectedValueOnce(new AppStoreConnectError("Not found", 404))
+      .mockResolvedValueOnce({ reviews: [] });
+
+    await expect(
+      pollCustomerReviews(database, fetchPage),
+    ).resolves.toMatchObject({
+      attemptedApps: 2,
+      skipped: 0,
+      failed: 1,
+    });
   });
 
   it("escapes review content before placing it in Telegram HTML", () => {

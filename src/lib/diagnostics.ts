@@ -7,6 +7,7 @@ export interface DiagnosticContext {
   reason?: string;
   appBundleId?: string;
   appAppleId?: number;
+  accountId?: string;
   attemptedApps?: number;
   page?: number;
   itemId?: number;
@@ -115,6 +116,9 @@ function errorFields(error: unknown): Record<string, unknown> {
 
 function contextFields(context: DiagnosticContext): Record<string, unknown> {
   return {
+    ...(safeString(context.accountId, SAFE_IDENTIFIER)
+      ? { accountId: context.accountId }
+      : {}),
     ...(safeString(context.task, SAFE_LABEL) ? { task: context.task } : {}),
     ...(safeString(context.route, SAFE_LABEL) ? { route: context.route } : {}),
     ...(safeString(context.phase, SAFE_LABEL) ? { phase: context.phase } : {}),

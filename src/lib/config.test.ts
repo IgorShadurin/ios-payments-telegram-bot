@@ -4,6 +4,7 @@ import {
   getAppStoreAnalyticsConfig,
   getAppStoreAnalyticsSetupConfig,
   getAppStoreConnectConfig,
+  getReviewAccountConfigs,
 } from "./config";
 
 const managedKeys = [
@@ -12,6 +13,7 @@ const managedKeys = [
   "APP_STORE_CONNECT_KEY_ID",
   "APP_STORE_CONNECT_PRIVATE_KEY",
   "APP_STORE_CONNECT_PRIVATE_KEY_BASE64",
+  "APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON",
   "APPLE_ANALYTICS_KEY_TYPE",
   "APPLE_ANALYTICS_ISSUER_ID",
   "APPLE_ANALYTICS_KEY_ID",
@@ -39,6 +41,66 @@ afterEach(() => {
 });
 
 describe("App Store Connect configuration", () => {
+  function configureReviewAccounts() {
+    const key = generateKeyPairSync("ec", { namedCurve: "P-256" })
+      .privateKey.export({ format: "pem", type: "pkcs8" })
+      .toString();
+    process.env.APP_STORE_CONNECT_KEY_TYPE = "team";
+    process.env.APP_STORE_CONNECT_ISSUER_ID =
+      "69a6de70-5c3f-47e3-e053-5b8c7c11a4d1";
+    process.env.APP_STORE_CONNECT_KEY_ID = "OLDKEY";
+    process.env.APP_STORE_CONNECT_PRIVATE_KEY = key;
+    delete process.env.APP_STORE_CONNECT_PRIVATE_KEY_BASE64;
+    return {
+      id: "wowcoded",
+      appAppleIds: [6801154513],
+      keyType: "team",
+      issuerId: "69a6de70-5c3f-47e3-e053-5b8c7c11a4d2",
+      keyId: "NEWKEY",
+      privateKeyBase64: Buffer.from(key).toString("base64"),
+    };
+  }
+
+  it("loads additional review credentials without replacing the default", () => {
+    const extra = configureReviewAccounts();
+    process.env.APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON = JSON.stringify([
+      extra,
+    ]);
+    expect(getReviewAccountConfigs()).toMatchObject([
+      { id: "default", appAppleIds: [], credentials: { keyId: "OLDKEY" } },
+      {
+        id: "wowcoded",
+        appAppleIds: [6801154513],
+        credentials: { keyId: "NEWKEY", issuerId: extra.issuerId },
+      },
+    ]);
+    expect(getAppStoreConnectConfig().keyId).toBe("OLDKEY");
+    delete process.env.APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON;
+    expect(getReviewAccountConfigs()).toHaveLength(1);
+  });
+
+  it("rejects duplicate account names, duplicate app assignments, and invalid credentials without exposing secrets", () => {
+    const extra = configureReviewAccounts();
+    for (const entries of [
+      [extra, extra],
+      [extra, { ...extra, id: "another" }],
+      [{ ...extra, id: "default" }],
+      [{ ...extra, issuerId: undefined }],
+      [{ ...extra, privateKeyBase64: "sensitive-key-not-base64" }],
+    ]) {
+      process.env.APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON =
+        JSON.stringify(entries);
+      expect(getReviewAccountConfigs).toThrow(
+        /^App Store Connect configuration is invalid: APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON$/,
+      );
+    }
+    process.env.APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON =
+      "{sensitive-key-invalid-json";
+    expect(getReviewAccountConfigs).toThrow(
+      /^App Store Connect configuration is invalid: APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON$/,
+    );
+  });
+
   it("accepts Apple's canonical issuer IDs even without RFC UUID version bits", () => {
     const { privateKey } = generateKeyPairSync("ec", {
       namedCurve: "P-256",

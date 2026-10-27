@@ -133,6 +133,12 @@ function decodePrivateKeyBase64(
 }
 
 export function getAppStoreConnectConfig(): AppStoreConnectConfig {
+  return parseAppStoreConnectConfig(process.env);
+}
+
+function parseAppStoreConnectConfig(
+  environment: Record<string, string | undefined>,
+): AppStoreConnectConfig {
   const schema = z.object({
     APP_STORE_CONNECT_KEY_TYPE: z.enum(["team", "individual"]).default("team"),
     APP_STORE_CONNECT_ISSUER_ID: z
@@ -153,7 +159,7 @@ export function getAppStoreConnectConfig(): AppStoreConnectConfig {
       .max(20_000)
       .optional(),
   });
-  const parsed = schema.safeParse(process.env);
+  const parsed = schema.safeParse(environment);
   if (!parsed.success) {
     throw new Error(
       `App Store Connect configuration is invalid: ${parsed.error.issues
@@ -184,6 +190,71 @@ export function getAppStoreConnectConfig(): AppStoreConnectConfig {
     keyId: parsed.data.APP_STORE_CONNECT_KEY_ID,
     privateKey: rawKey ?? decodePrivateKeyBase64(base64Key ?? ""),
   };
+}
+
+export interface ReviewAccountConfig {
+  id: string;
+  appAppleIds: readonly number[];
+  credentials: AppStoreConnectConfig;
+}
+
+export function getReviewAccountConfigs(): ReviewAccountConfig[] {
+  const accounts: ReviewAccountConfig[] = [
+    {
+      id: "default",
+      appAppleIds: [],
+      credentials: getAppStoreConnectConfig(),
+    },
+  ];
+  const raw = process.env.APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON;
+  if (!raw?.trim()) return accounts;
+  const variableName = "APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON";
+  try {
+    const entries = z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-z0-9_-]{1,64}$/),
+            appAppleIds: z
+              .array(z.number().int().positive().safe())
+              .min(1)
+              .max(500),
+            keyType: z.enum(["team", "individual"]).default("team"),
+            issuerId: z.string().optional(),
+            keyId: z.string(),
+            privateKeyBase64: z.string(),
+          })
+          .strict(),
+      )
+      .max(20)
+      .parse(JSON.parse(raw));
+    const ids = new Set(["default"]);
+    const apps = new Set<number>();
+    for (const entry of entries) {
+      if (ids.has(entry.id)) throw new Error("Duplicate account ID");
+      ids.add(entry.id);
+      for (const id of entry.appAppleIds) {
+        if (apps.has(id)) throw new Error("Duplicate app assignment");
+        apps.add(id);
+      }
+      accounts.push({
+        id: entry.id,
+        appAppleIds: entry.appAppleIds,
+        credentials: parseAppStoreConnectConfig({
+          APP_STORE_CONNECT_KEY_TYPE: entry.keyType,
+          APP_STORE_CONNECT_ISSUER_ID: entry.issuerId,
+          APP_STORE_CONNECT_KEY_ID: entry.keyId,
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: entry.privateKeyBase64,
+        }),
+      });
+    }
+  } catch {
+    // Never include JSON parser/Zod details: they can contain key material.
+    throw new Error(
+      `App Store Connect configuration is invalid: ${variableName}`,
+    );
+  }
+  return accounts;
 }
 
 export function getAppStoreAnalyticsConfig(): AppStoreConnectConfig {

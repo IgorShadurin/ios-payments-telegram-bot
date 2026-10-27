@@ -597,9 +597,47 @@ For an individual API key, use
 `APP_STORE_CONNECT_ISSUER_ID`, and set that key's ID and private key. The
 individual user's role and per-app access determine which reviews it can read.
 
-The worker exits nonzero if an app has a permanent failure. Run the existing
-delivery worker every minute to send queued review alerts and retry Telegram
-failures.
+For apps owned by another Apple account, keep the existing credentials for the
+original account and add `APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON` as a deployment
+secret. It is an array of account entries, for example:
+
+```json
+[{"id":"wowcoded","appAppleIds":[6801154513],"keyType":"team","issuerId":"00000000-0000-0000-0000-000000000000","keyId":"NEWKEY1234","privateKeyBase64":"base64-encoded-p8-file"}]
+```
+
+Use an **App Store Connect API** key from the receiving account, with permission
+to read reviews. An **In-App Purchase** key is a separate credential and does not
+replace the review API key. The account ID is a unique lowercase label for logs;
+`default` is reserved. Each numeric app ID can belong to only one additional
+account. Apps without an explicit assignment use the original credentials.
+Invalid or overlapping assignments fail validation without printing secrets.
+
+Both the scheduled worker and manual review API use these assignments. They
+preserve the existing SQLite review history and Telegram outbox, so transferring
+an app does not create another baseline or resend old reviews. All accounts
+deliver through the same configured Telegram bot and chat. Poll results include
+an `accounts` summary and logs include `accountId`. Authentication failures and
+rate-limit deferrals stop only the affected account; other accounts still run.
+These settings apply to reviews; analytics credentials are configured separately.
+
+The worker exits nonzero for permanent failures, except an app-specific HTTP
+`403` when at least one review page was read successfully for the same account
+during the run.
+Those inaccessible apps are counted in `skipped` and logged as
+`review_poll_app_skipped` warnings with reason `access_denied`; the remaining
+apps continue normally. The manual review API also returns `skippedApps` bundle
+IDs. If no app in an account is readable, permission failures still fail the task, so a key
+with insufficient permissions cannot silently disable review polling.
+
+An app transferred to another developer account may return `403` when polled
+with the old account's key. Check the logged bundle ID and numeric App Store ID
+against the transferred app. To resume its review alerts, poll it with a key
+authorized in the receiving account. If it should remain in this account,
+check the configured API key's role and app access. Skipped apps are retried
+on the next scheduled run without changing their stored reviews or baseline.
+
+Run the existing delivery worker every minute to send queued review alerts
+and retry Telegram failures.
 
 Backend failures are logged as one JSON line with a `diagnosticId`, timestamp,
 operation, safe error type, code and status, and elapsed time. Review polling
@@ -613,11 +651,11 @@ review text, request URLs, and upstream error descriptions. Unexpected API
 Temporary network errors, Apple HTTP `429` rate limits, and Apple `5xx`
 responses use increasing retry delays of 5 and 20 seconds, extended when Apple
 provides a reasonable `Retry-After` value. After the third unsuccessful request,
-the worker defers the rest of the poll to the next scheduled run and exits
-successfully, so a shared API-key rate limit does not create a burst across all
+the worker defers the rest of that account's poll to the next scheduled run
+without failing, so a shared API-key rate limit does not create a burst across all
 registered apps or a false Coolify task-failure alert. It also watches Apple's
 `X-Rate-Limit` response header and stops before consuming the final 10 requests.
-Authentication failures stop the cycle and fail immediately; per-app
+Authentication failures stop the affected account's cycle and fail the task; per-app
 permission and unknown-app errors remain visible while other apps continue.
 
 ## Delivery queue and retries

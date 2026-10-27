@@ -83,6 +83,7 @@ export interface ReviewPollResult {
   baselineApps: number;
   stored: number;
   queued: number;
+  skipped: number;
   failed: number;
   deferred: boolean;
   deferredReason?: ReviewPollDeferredReason;
@@ -96,6 +97,10 @@ export interface ReviewPollErrorContext {
 
 export interface ReviewPollDeferredContext extends ReviewPollErrorContext {
   reason: ReviewPollDeferredReason;
+}
+
+export interface ReviewPollSkippedContext extends ReviewPollErrorContext {
+  reason: "access_denied";
 }
 
 function deferredReason(error: AppStoreConnectError): ReviewPollDeferredReason {
@@ -137,17 +142,47 @@ export async function pollCustomerReviews(
     error: unknown,
     context: ReviewPollDeferredContext,
   ) => void = () => undefined,
+  onSkipped: (
+    app: RegisteredApp,
+    error: AppStoreConnectError,
+    context: ReviewPollSkippedContext,
+  ) => void = () => undefined,
+  appAppleIds?: ReadonlySet<number>,
 ): Promise<ReviewPollResult> {
-  const apps = database.listApps(false);
+  const apps = database
+    .listApps(false)
+    .filter((app) => !appAppleIds || appAppleIds.has(app.appAppleId));
   const result: ReviewPollResult = {
     apps: apps.length,
     attemptedApps: 0,
     baselineApps: 0,
     stored: 0,
     queued: 0,
+    skipped: 0,
     failed: 0,
     deferred: false,
   };
+  let successfulPages = 0;
+  const accessDenied: Array<{
+    app: RegisteredApp;
+    error: AppStoreConnectError;
+    context: ReviewPollErrorContext;
+  }> = [];
+
+  function finish(): ReviewPollResult {
+    // A readable app confirms the key works. Otherwise, keep permission
+    // failures fatal so a misconfigured key cannot silently disable polling.
+    for (const { app, error, context } of accessDenied) {
+      if (successfulPages > 0) {
+        result.skipped += 1;
+        onSkipped(app, error, { ...context, reason: "access_denied" });
+      } else {
+        result.failed += 1;
+        onError(app, error, context);
+      }
+    }
+    return result;
+  }
 
   for (const [appIndex, app] of apps.entries()) {
     result.attemptedApps += 1;
@@ -162,6 +197,7 @@ export async function pollCustomerReviews(
       ) {
         pageAttempted = pageNumber + 1;
         const page = await fetchPage(app.appAppleId, nextUrl);
+        successfulPages += 1;
         const hadKnownReview = page.reviews.some((review) =>
           database.getCustomerReview(review.id),
         );
@@ -201,13 +237,25 @@ export async function pollCustomerReviews(
             page: pageAttempted,
             durationMs: Date.now() - appStartedAt,
           });
-          return result;
+          return finish();
         }
         if (appPollComplete) {
           break;
         }
       }
     } catch (error) {
+      if (error instanceof AppStoreConnectError && error.status === 403) {
+        accessDenied.push({
+          app,
+          error,
+          context: {
+            attemptedApps: result.attemptedApps,
+            page: pageAttempted,
+            durationMs: Date.now() - appStartedAt,
+          },
+        });
+        continue;
+      }
       if (isRetryableAppStoreConnectError(error)) {
         result.deferred = true;
         result.deferredReason = deferredReason(error);
@@ -217,7 +265,7 @@ export async function pollCustomerReviews(
           page: pageAttempted,
           durationMs: Date.now() - appStartedAt,
         });
-        return result;
+        return finish();
       }
       result.failed += 1;
       onError(app, error, {
@@ -226,10 +274,10 @@ export async function pollCustomerReviews(
         durationMs: Date.now() - appStartedAt,
       });
       if (error instanceof AppStoreConnectError && error.status === 401) {
-        return result;
+        return finish();
       }
     }
   }
 
-  return result;
+  return finish();
 }

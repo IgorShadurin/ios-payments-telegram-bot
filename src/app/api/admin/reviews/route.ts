@@ -1,18 +1,11 @@
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { isAdminRequestAuthorized } from "@/lib/admin-auth";
-import {
-  createAppStoreConnectToken,
-  fetchCustomerReviewPage,
-} from "@/lib/app-store-connect";
-import { getAppStoreConnectConfig } from "@/lib/config";
 import { getDatabase } from "@/lib/database";
 import { deliverTelegramOutboxMessageNow } from "@/lib/delivery";
 import { logBackendFailure, logBackendWarning } from "@/lib/diagnostics";
-import {
-  pollCustomerReviews,
-  queueStoredCustomerReviewNotifications,
-} from "@/lib/reviews";
+import { pollConfiguredCustomerReviews } from "@/lib/review-accounts";
+import { queueStoredCustomerReviewNotifications } from "@/lib/reviews";
 import type { StoredCustomerReviewWithApp } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -96,15 +89,11 @@ export async function POST(request: Request) {
       return unauthorized();
     }
     const { limit, notify } = parseOptions(request);
-    const config = getAppStoreConnectConfig();
-    const token = () => createAppStoreConnectToken(config);
     const failedApps: string[] = [];
+    const skippedApps: string[] = [];
     const failureIds: string[] = [];
-    const poll = await pollCustomerReviews(
-      getDatabase(),
-      (appAppleId, nextUrl) =>
-        fetchCustomerReviewPage(appAppleId, token, nextUrl),
-      (app, error, context) => {
+    const poll = await pollConfiguredCustomerReviews(getDatabase(), {
+      onError: (app, error, context) => {
         failedApps.push(app.bundleId);
         failureIds.push(
           logBackendFailure("manual_review_poll_app_failed", error, {
@@ -115,7 +104,7 @@ export async function POST(request: Request) {
           }),
         );
       },
-      (app, error, context) => {
+      onDeferred: (app, error, context) => {
         logBackendWarning("manual_review_poll_deferred", error, {
           route: "admin/reviews",
           appBundleId: app.bundleId,
@@ -123,7 +112,16 @@ export async function POST(request: Request) {
           ...context,
         });
       },
-    );
+      onSkipped: (app, error, context) => {
+        skippedApps.push(app.bundleId);
+        logBackendWarning("manual_review_poll_app_skipped", error, {
+          route: "admin/reviews",
+          appBundleId: app.bundleId,
+          appAppleId: app.appAppleId,
+          ...context,
+        });
+      },
+    });
     const database = getDatabase();
     const reviews = database.listCustomerReviews(limit);
     const notifications = notify
@@ -143,6 +141,7 @@ export async function POST(request: Request) {
         ...(ok ? {} : { errorId: failureIds[0], errorIds: failureIds }),
         poll,
         failedApps,
+        skippedApps,
         notifications: {
           requested: notify,
           queued: notifications.queued,
