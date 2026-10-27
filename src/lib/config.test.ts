@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  getAnalyticsAccountConfigs,
   getAppStoreAnalyticsConfig,
   getAppStoreAnalyticsSetupConfig,
   getAppStoreConnectConfig,
@@ -14,6 +15,7 @@ const managedKeys = [
   "APP_STORE_CONNECT_PRIVATE_KEY",
   "APP_STORE_CONNECT_PRIVATE_KEY_BASE64",
   "APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON",
+  "APPLE_ANALYTICS_ACCOUNTS_JSON",
   "APPLE_ANALYTICS_KEY_TYPE",
   "APPLE_ANALYTICS_ISSUER_ID",
   "APPLE_ANALYTICS_KEY_ID",
@@ -77,6 +79,49 @@ describe("App Store Connect configuration", () => {
     expect(getAppStoreConnectConfig().keyId).toBe("OLDKEY");
     delete process.env.APP_STORE_CONNECT_REVIEW_ACCOUNTS_JSON;
     expect(getReviewAccountConfigs()).toHaveLength(1);
+  });
+
+  it("loads separate analytics read/setup keys for the transferred account", () => {
+    const extra = configureReviewAccounts();
+    const {
+      id: _id,
+      appAppleIds: _apps,
+      ...setup
+    } = { ...extra, keyId: "ADMINKEY" };
+    process.env.APPLE_ANALYTICS_ACCOUNTS_JSON = JSON.stringify([
+      { ...extra, setup },
+    ]);
+    expect(getAnalyticsAccountConfigs()).toMatchObject([
+      { id: "default" },
+      {
+        id: "wowcoded",
+        appAppleIds: [6801154513],
+        credentials: { keyId: "NEWKEY" },
+        setupCredentials: { keyId: "ADMINKEY" },
+      },
+    ]);
+  });
+
+  it("rejects ambiguous analytics routing, mismatched setup owners, and invalid secrets safely", () => {
+    const extra = configureReviewAccounts();
+    const { id: _id, appAppleIds: _apps, ...setup } = extra;
+    for (const value of [
+      [extra, extra],
+      [extra, { ...extra, id: "other" }],
+      [{ ...extra, id: "default" }],
+      [
+        {
+          ...extra,
+          setup: { ...setup, issuerId: "69a6de70-5c3f-47e3-e053-5b8c7c11a4d1" },
+        },
+      ],
+      [{ ...extra, privateKeyBase64: "SECRET" }],
+    ]) {
+      process.env.APPLE_ANALYTICS_ACCOUNTS_JSON = JSON.stringify(value);
+      expect(getAnalyticsAccountConfigs).toThrow(
+        /^App Store analytics configuration is invalid: APPLE_ANALYTICS_ACCOUNTS_JSON$/,
+      );
+    }
   });
 
   it("rejects duplicate account names, duplicate app assignments, and invalid credentials without exposing secrets", () => {

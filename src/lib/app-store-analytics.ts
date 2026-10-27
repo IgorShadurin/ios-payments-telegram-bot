@@ -293,7 +293,7 @@ export class AppStoreAnalyticsClient {
   private pauseBeforeNextRequestMs = 0;
 
   constructor(
-    private readonly token: string,
+    private readonly token: string | (() => string),
     options: AppStoreAnalyticsClientOptions = {},
   ) {
     this.fetchImplementation = options.fetchImplementation ?? fetch;
@@ -316,12 +316,14 @@ export class AppStoreAnalyticsClient {
 
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      const token =
+        typeof this.token === "function" ? this.token() : this.token;
       let response: Response;
       try {
         response = await this.fetchImplementation(url, {
           ...init,
           headers: {
-            authorization: `Bearer ${this.token}`,
+            authorization: `Bearer ${token}`,
             accept: "application/json",
             ...init.headers,
           },

@@ -1,18 +1,14 @@
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { z } from "zod";
+import { AnalyticsAccounts } from "../src/lib/analytics-accounts";
 import {
   ANALYTICS_COMPLETENESS_DAYS,
   type AnalyticsMetric,
-  AppStoreAnalyticsClient,
+  type AppStoreAnalyticsClient,
   fetchPublicAppMetadata,
 } from "../src/lib/app-store-analytics";
-import { createAppStoreConnectToken } from "../src/lib/app-store-connect";
-import {
-  getAppStoreAnalyticsConfig,
-  getAppStoreAnalyticsSetupConfig,
-  getDatabasePath,
-} from "../src/lib/config";
+import { getDatabasePath } from "../src/lib/config";
 import {
   DAILY_REPORT_TIME_ZONE,
   monthlyReportCaption,
@@ -281,23 +277,18 @@ async function main(): Promise<void> {
       if (apps.length === 0) {
         throw new Error("No enabled apps are registered");
       }
-      const client = new AppStoreAnalyticsClient(
-        createAppStoreConnectToken(getAppStoreAnalyticsConfig()),
-      );
-      let setupClient: AppStoreAnalyticsClient | undefined;
-      const getSetupClient = (): AppStoreAnalyticsClient => {
-        setupClient ??= new AppStoreAnalyticsClient(
-          createAppStoreConnectToken(getAppStoreAnalyticsSetupConfig()),
-        );
-        return setupClient;
-      };
+      const accounts = new AnalyticsAccounts();
       const metrics: CollectedMonthlyAppMetrics[] = [];
       for (const app of apps) {
         metrics.push(
-          await collectApp(client, getSetupClient, app, startDate, endDate),
+          await accounts.collect(app, (client, getSetupClient) =>
+            collectApp(client, getSetupClient, app, startDate, endDate),
+          ),
         );
       }
-      inferZeroActivityAfterPortfolioPublication(metrics);
+      for (const group of accounts.groupApps(metrics)) {
+        inferZeroActivityAfterPortfolioPublication(group);
+      }
       database.storePortfolioMetrics("monthly", startDate, endDate, metrics);
       const pendingMetrics = metrics.reduce(
         (sum, app) =>

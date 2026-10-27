@@ -10,6 +10,22 @@ import {
 } from "./app-store-analytics";
 
 describe("App Store analytics", () => {
+  it("refreshes the token on retries and subsequent requests", async () => {
+    let token = 0;
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("", { status: 500 }))
+      .mockImplementation(async () => Response.json({ data: [], links: {} }));
+    const client = new AppStoreAnalyticsClient(() => `token-${++token}`, {
+      fetchImplementation: fetcher,
+      wait: async () => undefined,
+    });
+    await client.findOngoingReportRequest(123);
+    await client.findOngoingReportRequest(456);
+    expect(
+      fetcher.mock.calls.map(([, init]) => init.headers.authorization),
+    ).toEqual(["Bearer token-1", "Bearer token-2", "Bearer token-3"]);
+  });
   it("returns Apple's first public release date with app metadata", async () => {
     const metadata = await fetchPublicAppMetadata(
       {

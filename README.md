@@ -620,6 +620,24 @@ an `accounts` summary and logs include `accountId`. Authentication failures and
 rate-limit deferrals stop only the affected account; other accounts still run.
 These settings apply to reviews; analytics credentials are configured separately.
 
+For the same transferred apps, set `APPLE_ANALYTICS_ACCOUNTS_JSON` as a separate
+runtime secret. Its entries use the same `id`, `appAppleIds`, `keyType`,
+`issuerId`, `keyId`, and `privateKeyBase64` fields, but the key must have
+**Sales and Reports**, **Finance**, or **Admin** access. The review key's
+Customer Support role cannot read analytics. An optional `setup` object holds
+the same credential fields for a separate **Admin** key from the same account,
+used only when creating ongoing or snapshot report requests. Without `setup`,
+the account's own download key is used for setup; an additional account never
+falls back to the original account's Admin key.
+
+Daily, weekly, monthly, and analytics setup workers all use these assignments.
+Unassigned apps keep using `APPLE_ANALYTICS_*` and `APPLE_ANALYTICS_SETUP_*`.
+JWTs are signed freshly for each API request, including retries after rate-limit
+waits. Failures log the account ID and app identifiers without key material.
+Publication in one account cannot turn missing data in another account into
+zero activity. Newly requested reports remain pending until Apple publishes
+them; existing stored metrics and the Telegram destination are preserved.
+
 The worker exits nonzero for permanent failures, except an app-specific HTTP
 `403` when at least one review page was read successfully for the same account
 during the run.

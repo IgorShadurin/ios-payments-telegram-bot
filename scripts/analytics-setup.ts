@@ -1,9 +1,5 @@
-import {
-  AppStoreAnalyticsClient,
-  AppStoreAnalyticsError,
-} from "../src/lib/app-store-analytics";
-import { createAppStoreConnectToken } from "../src/lib/app-store-connect";
-import { getAppStoreAnalyticsSetupConfig } from "../src/lib/config";
+import { AnalyticsAccounts } from "../src/lib/analytics-accounts";
+import { AppStoreAnalyticsError } from "../src/lib/app-store-analytics";
 import { AppDatabase } from "../src/lib/database";
 
 async function main(): Promise<void> {
@@ -13,12 +9,11 @@ async function main(): Promise<void> {
     if (apps.length === 0) {
       throw new Error("No enabled apps are registered");
     }
-    const client = new AppStoreAnalyticsClient(
-      createAppStoreConnectToken(getAppStoreAnalyticsSetupConfig()),
-    );
+    const accounts = new AnalyticsAccounts();
     let created = 0;
     let existing = 0;
     for (const app of apps) {
+      const client = accounts.forApp(app.appAppleId).getSetupClient();
       const current = await client.findOngoingReportRequest(app.appAppleId);
       if (current && !current.stopped) {
         existing += 1;

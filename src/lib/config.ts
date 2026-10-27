@@ -257,6 +257,86 @@ export function getReviewAccountConfigs(): ReviewAccountConfig[] {
   return accounts;
 }
 
+export interface AnalyticsAccountConfig extends ReviewAccountConfig {
+  setupCredentials?: AppStoreConnectConfig;
+}
+
+export function getAnalyticsAccountConfigs(): AnalyticsAccountConfig[] {
+  const accounts: AnalyticsAccountConfig[] = [
+    {
+      id: "default",
+      appAppleIds: [],
+      credentials: getAppStoreAnalyticsConfig(),
+    },
+  ];
+  const raw = process.env.APPLE_ANALYTICS_ACCOUNTS_JSON;
+  if (!raw?.trim()) return accounts;
+  const credentialSchema = z
+    .object({
+      keyType: z.enum(["team", "individual"]).default("team"),
+      issuerId: z.string().optional(),
+      keyId: z.string(),
+      privateKeyBase64: z.string(),
+    })
+    .strict();
+  const parseCredentials = (value: z.infer<typeof credentialSchema>) =>
+    parseAppStoreConnectConfig({
+      APP_STORE_CONNECT_KEY_TYPE: value.keyType,
+      APP_STORE_CONNECT_ISSUER_ID: value.issuerId,
+      APP_STORE_CONNECT_KEY_ID: value.keyId,
+      APP_STORE_CONNECT_PRIVATE_KEY_BASE64: value.privateKeyBase64,
+    });
+  try {
+    const entries = z
+      .array(
+        credentialSchema
+          .extend({
+            id: z.string().regex(/^[a-z0-9_-]{1,64}$/),
+            appAppleIds: z
+              .array(z.number().int().positive().safe())
+              .min(1)
+              .max(500),
+            setup: credentialSchema.optional(),
+          })
+          .strict(),
+      )
+      .max(20)
+      .parse(JSON.parse(raw));
+    const ids = new Set(["default"]);
+    const apps = new Set<number>();
+    for (const entry of entries) {
+      if (ids.has(entry.id)) throw new Error("Duplicate account ID");
+      ids.add(entry.id);
+      for (const id of entry.appAppleIds) {
+        if (apps.has(id)) throw new Error("Duplicate app assignment");
+        apps.add(id);
+      }
+      const credentials = parseCredentials(entry);
+      const setupCredentials = entry.setup
+        ? parseCredentials(entry.setup)
+        : undefined;
+      if (
+        credentials.keyType === "team" &&
+        setupCredentials?.keyType === "team" &&
+        credentials.issuerId !== setupCredentials.issuerId
+      ) {
+        throw new Error("Setup key belongs to another account");
+      }
+      accounts.push({
+        id: entry.id,
+        appAppleIds: entry.appAppleIds,
+        credentials,
+        setupCredentials,
+      });
+    }
+  } catch {
+    throw new Error(
+      "App Store analytics configuration is invalid: APPLE_ANALYTICS_ACCOUNTS_JSON",
+    );
+  }
+  return accounts;
+}
+
 export function getAppStoreAnalyticsConfig(): AppStoreConnectConfig {
   const configured = [
     process.env.APPLE_ANALYTICS_KEY_TYPE,
