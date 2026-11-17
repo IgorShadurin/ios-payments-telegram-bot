@@ -75,7 +75,7 @@ function safeAppleIdentifier(value: unknown): string | undefined {
     : undefined;
 }
 
-function transportCode(error: unknown): string | undefined {
+export function transportCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object") {
     return undefined;
   }
@@ -87,7 +87,7 @@ function transportCode(error: unknown): string | undefined {
   return safeAppleIdentifier(cause?.code ?? candidate.code);
 }
 
-async function appleErrorMetadata(
+export async function appleErrorMetadata(
   response: Response,
 ): Promise<AppStoreConnectDiagnostics> {
   const requestId = safeAppleIdentifier(

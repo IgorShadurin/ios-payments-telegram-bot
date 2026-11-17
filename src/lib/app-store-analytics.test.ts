@@ -10,6 +10,57 @@ import {
 } from "./app-store-analytics";
 
 describe("App Store analytics", () => {
+  it("preserves transport diagnostics after exhausting retries", async () => {
+    const failure = new TypeError("sensitive URL", {
+      cause: { code: "UND_ERR_CONNECT_TIMEOUT" },
+    });
+    const fetcher = vi.fn().mockRejectedValue(failure);
+    const wait = vi.fn().mockResolvedValue(undefined);
+    const client = new AppStoreAnalyticsClient("token", {
+      fetchImplementation: fetcher,
+      wait,
+    });
+    await expect(client.findOngoingReportRequest(123)).rejects.toMatchObject({
+      diagnostics: {
+        phase: "transport",
+        transportType: "TypeError",
+        transportCode: "UND_ERR_CONNECT_TIMEOUT",
+        attempts: 3,
+      },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls).toEqual([[5000], [20000]]);
+  });
+
+  it("retains safe Apple authentication identifiers without response details", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json(
+          {
+            errors: [
+              { code: "NOT_AUTHORIZED", id: "apple-id", detail: "secret" },
+            ],
+          },
+          { status: 401, headers: { "x-request-id": "request-id" } },
+        ),
+      );
+    const client = new AppStoreAnalyticsClient("token", {
+      fetchImplementation: fetcher,
+    });
+    await expect(client.findOngoingReportRequest(123)).rejects.toMatchObject({
+      status: 401,
+      diagnostics: {
+        phase: "http",
+        appleCode: "NOT_AUTHORIZED",
+        appleErrorId: "apple-id",
+        requestId: "request-id",
+        attempts: 1,
+      },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("refreshes the token on retries and subsequent requests", async () => {
     let token = 0;
     const fetcher = vi

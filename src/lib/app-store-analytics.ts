@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { gunzipSync } from "node:zlib";
 import { z } from "zod";
+import {
+  type AppStoreConnectDiagnostics,
+  appleErrorMetadata,
+  transportCode,
+} from "./app-store-connect";
 import type { RegisteredApp } from "./types";
 
 const APP_STORE_CONNECT_ORIGIN = "https://api.appstoreconnect.apple.com";
@@ -118,6 +123,7 @@ export class AppStoreAnalyticsError extends Error {
     message: string,
     readonly status?: number,
     readonly retryAfterMs?: number,
+    readonly diagnostics: AppStoreConnectDiagnostics = {},
   ) {
     super(message);
     this.name = "AppStoreAnalyticsError";
@@ -308,6 +314,7 @@ export class AppStoreAnalyticsClient {
     init: RequestInit = {},
   ): Promise<unknown> {
     const url = validateAppleApiUrl(String(input));
+    const startedAt = Date.now();
     if (this.pauseBeforeNextRequestMs > 0) {
       const pauseMs = this.pauseBeforeNextRequestMs;
       this.pauseBeforeNextRequestMs = 0;
@@ -329,9 +336,18 @@ export class AppStoreAnalyticsClient {
           },
           signal: AbortSignal.timeout(20_000),
         });
-      } catch {
+      } catch (error) {
         lastError = new AppStoreAnalyticsError(
           "App Store Connect request failed",
+          undefined,
+          undefined,
+          {
+            phase: "transport",
+            transportType: error instanceof Error ? error.name : undefined,
+            transportCode: transportCode(error),
+            attempts: attempt + 1,
+            durationMs: Date.now() - startedAt,
+          },
         );
         if (attempt < 2) {
           await this.wait(RETRY_DELAYS_MS[attempt]);
@@ -350,12 +366,17 @@ export class AppStoreAnalyticsClient {
         return readJson(response);
       }
 
-      await response.body?.cancel().catch(() => undefined);
+      const metadata = await appleErrorMetadata(response);
       const retryMs = retryAfterMs(response.headers.get("retry-after"));
       lastError = new AppStoreAnalyticsError(
         `App Store Connect rejected the request with HTTP ${response.status}`,
         response.status,
         retryMs,
+        {
+          ...metadata,
+          attempts: attempt + 1,
+          durationMs: Date.now() - startedAt,
+        },
       );
       const retryable = response.status === 429 || response.status >= 500;
       if (!retryable || attempt === 2) {
